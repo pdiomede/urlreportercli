@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Patches the pip-generated `urlreporter` entry-point script so it works
+# even when the project lives inside iCloud Drive (Mobile Documents auto-flags
+# pip's editable `.pth` file as hidden, which Python 3.13+ silently skips).
+#
+# Run this once after `pip install -e .` (or after any reinstall). It's a no-op
+# outside iCloud Drive.
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT="$ROOT/.venv/bin/urlreporter"
+
+if [[ ! -f "$SCRIPT" ]]; then
+    echo "fix-venv-launcher: $SCRIPT not found. Did you run 'pip install -e .' yet?" >&2
+    exit 1
+fi
+
+if grep -q "iCloud Drive auto-flags" "$SCRIPT"; then
+    echo "fix-venv-launcher: already patched."
+    exit 0
+fi
+
+PY_TMP="$(mktemp)"
+ROOT_ESCAPED="$ROOT"
+awk -v root="$ROOT_ESCAPED" '
+  /^from urlreporter\.cli import main$/ && !done {
+    print "import os, sys"
+    print "# iCloud Drive auto-flags pip'\''s editable .pth files as hidden, which Python"
+    print "# 3.13+ silently skips. Inject the project root so the import resolves anyway."
+    print "_ROOT = \"" root "\""
+    print "if os.path.isdir(os.path.join(_ROOT, \"urlreporter\")) and _ROOT not in sys.path:"
+    print "    sys.path.insert(0, _ROOT)"
+    done = 1
+  }
+  /^import sys$/ && !seen_imports { seen_imports = 1; next }
+  { print }
+' "$SCRIPT" > "$PY_TMP"
+
+mv "$PY_TMP" "$SCRIPT"
+chmod +x "$SCRIPT"
+echo "fix-venv-launcher: patched $SCRIPT"

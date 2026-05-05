@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Local launcher that works even when the project lives inside iCloud Drive
+# (Mobile Documents auto-flags pip's editable .pth files as hidden, which
+# Python 3.13+ then skips). Adds the project root to PYTHONPATH and runs the
+# CLI module via the venv's python directly.
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if [[ -x "$ROOT/.venv/bin/python3" ]]; then
+    PY="$ROOT/.venv/bin/python3"
+elif [[ -x "$ROOT/.venv/bin/python" ]]; then
+    PY="$ROOT/.venv/bin/python"
+else
+    echo "urlreporter: no venv found at $ROOT/.venv" >&2
+    echo "  Run: python3 -m venv .venv && source .venv/bin/activate && pip install -e ." >&2
+    exit 1
+fi
+
+PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" exec "$PY" -m urlreporter.cli "$@"
