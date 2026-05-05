@@ -77,12 +77,20 @@ class SecurityHeadersScanner:
             except httpx.HTTPError as e:
                 return None, describe_exc(e)
             raw = resp.headers.get("X-Grade") or resp.headers.get("x-grade")
-            if raw is None:
-                return None, "No X-Grade header in response."
-            normalized = raw.strip().upper()
-            if _GRADE_RE.match(normalized):
-                return normalized, None
-            return None, raw.strip()
+            if raw is not None:
+                normalized = raw.strip().upper()
+                if _GRADE_RE.match(normalized):
+                    return normalized, None
+                return None, raw.strip()
+            # X-Grade header gone — parse grade from HTML body.
+            m = re.search(
+                r'class="score".*?<span[^>]*>([A-F][+\-]?)</span>',
+                resp.text,
+                re.DOTALL,
+            )
+            if m and _GRADE_RE.match(m.group(1).upper()):
+                return m.group(1).upper(), None
+            return None, "No X-Grade header in response."
 
         async def _fetch_target() -> httpx.Response | None:
             try:
