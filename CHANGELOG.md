@@ -9,6 +9,15 @@ This is the CLI distribution. Entries here are limited to changes that affect th
 
 ## [Unreleased]
 
+## [0.0.44] - 2026-05-05
+
+### Fixed (securityheaders.com scanner: HTML fallback for removed X-Grade header)
+- **`urlreporter/scanners/security_headers.py` now extracts the grade from the HTML body when the `X-Grade` response header is absent.** securityheaders.com silently removed this header; sites with full security headers (e.g. `urlreporter.com`) were returning ERROR instead of A+/100. The fix adds a regex fallback on `class="score"...<span>GRADE</span>` in the HTML body.
+- **Audit: all other scanners checked for the same pattern.** `ssllabs.py`, `mozilla_observatory.py`, and `hsts_preload.py` already handle missing fields defensively. No other scanner has a silently-breaking third-party header dependency.
+
+### Notes
+- **No changes to runner, grading thresholds, report renderers, or CLI flags.** One scanner file changed.
+
 ## [0.0.43] - 2026-05-05
 
 ### Notes
