@@ -9,6 +9,11 @@ This is the CLI distribution. Entries here are limited to changes that affect th
 
 ## [Unreleased]
 
+## [0.0.43] - 2026-05-05
+
+### Notes
+- **Version sync.** No engine, scanner, grading, or CLI changes. Patch level bumped to align with the urlreporter (web) repo's UI polish release (`© 2026 ·` prefix added to every footer, cascading-rain chevrons on the result page repositioned to point at the Markdown download button).
+
 ## [0.0.42] - 2026-05-05
 
 ### Changed (email_auth scanner: parent-walk + MX-aware skip)
