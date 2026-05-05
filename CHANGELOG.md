@@ -9,6 +9,16 @@ This is the CLI distribution. Entries here are limited to changes that affect th
 
 ## [Unreleased]
 
+## [0.0.37] - 2026-05-05
+
+### Notes
+- **Version sync.** No engine, scanner, grading, or CLI changes. Patch level bumped to align with the urlreporter (web) repo's nav-affordances release (version pill + GitHub link added to every inner page).
+
+## [0.0.36] - 2026-05-05
+
+### Notes
+- **Version sync.** No engine, scanner, grading, or CLI changes. Patch level bumped to align with the urlreporter (web) repo's footer-color fix on inner pages.
+
 ## [0.0.35] - 2026-05-05
 
 ### Notes
