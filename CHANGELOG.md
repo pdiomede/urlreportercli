@@ -9,6 +9,11 @@ This is the CLI distribution. Entries here are limited to changes that affect th
 
 ## [Unreleased]
 
+## [0.0.33] - 2026-05-05
+
+### Notes
+- **Version sync.** No engine, scanner, grading, or CLI changes. Patch level bumped to align with the urlreporter (web) repo's UI/contrast polish release.
+
 ## [0.0.32] - 2026-05-05
 
 ### Changed (raw summary now matches the report KPIs)
