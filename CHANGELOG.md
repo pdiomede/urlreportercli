@@ -9,6 +9,16 @@ This is the CLI distribution. Entries here are limited to changes that affect th
 
 ## [Unreleased]
 
+## [0.0.35] - 2026-05-05
+
+### Notes
+- **Version sync.** No engine, scanner, grading, or CLI changes. Patch level bumped to align with the urlreporter (web) repo's CSRF defense (Origin/Host check on the web `/scan` POST). The CLI is a local tool, so the change does not apply.
+
+## [0.0.34] - 2026-05-05
+
+### Notes
+- **Version sync.** No engine, scanner, grading, or CLI changes. Patch level bumped to align with the urlreporter (web) repo's security release (SSRF gate and concurrency cap on the web `/scan` POST). The CLI is a local tool, so neither change applies.
+
 ## [0.0.33] - 2026-05-05
 
 ### Notes
