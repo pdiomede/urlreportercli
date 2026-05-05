@@ -31,15 +31,27 @@ def _strip_quotes(s: str) -> str:
     return s
 
 
-async def _doh_txt(client: httpx.AsyncClient, name: str, *, label: str) -> list[str]:
-    """Look up TXT records for `name` via Cloudflare DoH. Returns [] on miss
-    (NXDOMAIN, no answers, transport failure). Raises RetryExhausted only when
-    every retry is a transient HTTP / network error."""
+def _parent_domains(host: str) -> list[str]:
+    """Return host plus its parent labels, e.g. a.b.c -> [a.b.c, b.c]. SPF/DMARC
+    are typically published at the registered domain (apex), not on every
+    subdomain - so for accurate detection on a webapp host like app.aave.com we
+    walk up to find records at the closest ancestor that has them."""
+    parts = host.split(".")
+    out: list[str] = []
+    for i in range(len(parts) - 1):
+        out.append(".".join(parts[i:]))
+    return out or [host]
+
+
+async def _doh_answers(client: httpx.AsyncClient, name: str, rrtype: str, *, label: str) -> list[dict]:
+    """Generic DoH JSON lookup. Returns the raw `Answer` array on success,
+    or [] on miss (NXDOMAIN, no answers, transport failure). Raises
+    RetryExhausted only when every retry is a transient HTTP / network error."""
     try:
         resp = await retry_request(
             lambda: client.get(
                 DOH_URL,
-                params={"name": name, "type": "TXT"},
+                params={"name": name, "type": rrtype},
                 headers={"Accept": "application/dns-json"},
                 timeout=15.0,
             ),
@@ -48,7 +60,7 @@ async def _doh_txt(client: httpx.AsyncClient, name: str, *, label: str) -> list[
     except RetryExhausted:
         raise
     except (httpx.HTTPError, ValueError) as e:
-        log.warning("%s DoH error for %s: %s", label, name, describe_exc(e))
+        log.warning("%s DoH error for %s/%s: %s", label, name, rrtype, describe_exc(e))
         return []
     if resp.status_code >= 400:
         return []
@@ -56,8 +68,21 @@ async def _doh_txt(client: httpx.AsyncClient, name: str, *, label: str) -> list[
         data = resp.json()
     except ValueError:
         return []
-    answers = [a for a in (data.get("Answer") or []) if a.get("type") == 16]
-    return [_strip_quotes(a.get("data", "")) for a in answers if a.get("data")]
+    return list(data.get("Answer") or [])
+
+
+async def _doh_txt(client: httpx.AsyncClient, name: str, *, label: str) -> list[str]:
+    """TXT records for `name`. Returns the parsed (quote-stripped) data strings."""
+    answers = await _doh_answers(client, name, "TXT", label=label)
+    return [_strip_quotes(a.get("data", "")) for a in answers if a.get("type") == 16 and a.get("data")]
+
+
+async def _doh_has_mx(client: httpx.AsyncClient, name: str, *, label: str) -> bool:
+    """True if `name` has any MX records. Used to decide whether a host (or its
+    apex) is set up to receive mail at all - non-mail-sending subdomains
+    legitimately don't need their own SPF/DMARC."""
+    answers = await _doh_answers(client, name, "MX", label=label)
+    return any(a.get("type") == 15 for a in answers)
 
 
 _SPF_ALL_RE = re.compile(r"(?:^|\s)([-~?+])all(?:\s|;|$)")
@@ -99,14 +124,24 @@ class EmailAuthScanner:
     Email-spoofing protection is one of the cheapest, highest-impact wins on
     a domain: every modern mailbox provider rejects unauthenticated mail
     purporting to come from yourdomain.com if you publish strict SPF + DMARC.
-    We probe:
 
-      - SPF:    TXT on the domain, looking for `v=spf1 …` with a qualifying
-                `-all` (hard fail) or `~all` (soft fail).
-      - DMARC:  TXT on `_dmarc.<domain>`, looking for `p=reject|quarantine|none`.
-      - DKIM:   TXT on `<selector>._domainkey.<domain>` for a small set of
-                common selectors; we report ANY match (we can't enumerate all
-                selectors a domain may have signed with).
+    Records typically live at the registered domain (apex), not on every
+    subdomain. Scanning a webapp host like app.aave.com penalizes too hard if
+    we only probe the leaf - the apex records that actually protect the
+    domain are at aave.com. So we walk up the parent chain looking for the
+    closest ancestor that has SPF / DMARC, and grade based on what's there.
+
+    For non-mail-sending subdomains (no MX anywhere in the chain, no SPF or
+    DMARC anywhere either), email auth simply isn't applicable: the scanner
+    returns a link-out result that's excluded from the overall score, rather
+    than a false-positive F.
+
+    Probes:
+      - SPF:    TXT on each parent of the input host. Closest match wins.
+      - DMARC:  TXT on `_dmarc.<each parent>`. Closest match wins.
+      - MX:     MX on each parent. Used to detect "this is a mail domain".
+      - DKIM:   TXT on `<selector>._domainkey.<host>` AND `<selector>._domainkey.<apex>`
+                across 10 common selectors; reports any match.
     """
 
     name = "Email auth (SPF/DMARC/DKIM)"
@@ -122,48 +157,118 @@ class EmailAuthScanner:
             )
         link = REPORT_URL.format(host=host)
 
-        # Fire SPF + DMARC + every DKIM selector probe concurrently. The
-        # earlier sequential loop did up to 12 round trips at ~200ms each
-        # (one per selector until a hit). With gather, total time collapses
-        # to a single RTT. The cost is up to 9 extra DKIM probes when the
-        # first selector hits; DoH is free and rate-limit-generous.
+        parents = _parent_domains(host)
+        apex = parents[-1] if parents else host
+        is_subdomain = len(parents) >= 2
+
+        # Build query plan: SPF, DMARC, and MX for every ancestor in parallel,
+        # plus DKIM on the input host (and on the apex as a fallback for
+        # subdomains that may inherit DKIM-signed mail from the parent zone).
+        spf_qs = [
+            _doh_txt(client, p, label=f"{self.name} SPF {p}")
+            for p in parents
+        ]
+        dmarc_qs = [
+            _doh_txt(client, f"_dmarc.{p}", label=f"{self.name} DMARC {p}")
+            for p in parents
+        ]
+        mx_qs = [
+            _doh_has_mx(client, p, label=f"{self.name} MX {p}")
+            for p in parents
+        ]
+        dkim_targets = [host] if host == apex else [host, apex]
+        dkim_qs = []
+        for target in dkim_targets:
+            for sel in DKIM_SELECTORS:
+                dkim_qs.append(
+                    _doh_txt(
+                        client, f"{sel}._domainkey.{target}",
+                        label=f"{self.name} DKIM {sel} {target}",
+                    )
+                )
+
         try:
-            queries = await asyncio.gather(
-                _doh_txt(client, host, label=f"{self.name} SPF"),
-                _doh_txt(client, f"_dmarc.{host}", label=f"{self.name} DMARC"),
-                *[
-                    _doh_txt(client, f"{sel}._domainkey.{host}", label=f"{self.name} DKIM {sel}")
-                    for sel in DKIM_SELECTORS
-                ],
-            )
+            results = await asyncio.gather(*spf_qs, *dmarc_qs, *mx_qs, *dkim_qs)
         except RetryExhausted as e:
             log.error("%s: %s", self.name, e)
             return ScanResult(scanner=self.name, ok=False, error=str(e), link=link)
-        spf_records, dmarc_records = queries[0], queries[1]
-        dkim_results = queries[2:]
-        # Pick the first selector (in DKIM_SELECTORS order) whose response
-        # carries a DKIM-shaped record. Preserves the prior "first hit wins"
-        # semantics deterministically.
-        dkim_records: list[str] = []
-        dkim_selector_hit: str | None = None
-        for sel, got in zip(DKIM_SELECTORS, dkim_results):
-            filtered = [r for r in got if "v=DKIM1" in r or "k=" in r or "p=" in r]
-            if filtered:
-                dkim_records = filtered
-                dkim_selector_hit = sel
+
+        n = len(parents)
+        spf_per_parent: list[list[str]] = list(results[0:n])
+        dmarc_per_parent: list[list[str]] = list(results[n:2 * n])
+        mx_per_parent: list[bool] = list(results[2 * n:3 * n])
+        dkim_per_target: list[list[str]] = list(results[3 * n:])
+
+        # Find the closest SPF / DMARC match, walking from leaf to apex.
+        spf_records: list[str] = []
+        spf_at: str | None = None
+        for parent, recs in zip(parents, spf_per_parent):
+            if any(r.lower().startswith("v=spf1") for r in recs):
+                spf_records = recs
+                spf_at = parent
                 break
 
-        # SPF: pick the first record that starts with v=spf1 (RFC: only one
-        # such record should exist; if multiple, the domain is misconfigured).
-        spf_hits = [r for r in spf_records if r.lower().startswith("v=spf1")]
-        spf_qualifier = _parse_spf_policy(spf_hits[0]) if spf_hits else ""
-        # DMARC: first record starting with v=DMARC1.
-        dmarc_hits = [r for r in dmarc_records if r.lower().startswith("v=dmarc1")]
-        dmarc_p, dmarc_sp = _parse_dmarc_policy(dmarc_hits[0]) if dmarc_hits else ("", "")
+        dmarc_records: list[str] = []
+        dmarc_at: str | None = None
+        for parent, recs in zip(parents, dmarc_per_parent):
+            if any(r.lower().startswith("v=dmarc1") for r in recs):
+                dmarc_records = recs
+                dmarc_at = parent
+                break
 
-        findings: list[Finding] = []
+        # MX presence anywhere in the chain.
+        has_mx = any(mx_per_parent)
 
-        # ---- Score ----
+        # DKIM: try host first, then apex.
+        dkim_records: list[str] = []
+        dkim_selector_hit: str | None = None
+        dkim_at: str | None = None
+        n_sel = len(DKIM_SELECTORS)
+        for i, target in enumerate(dkim_targets):
+            slot_start = i * n_sel
+            slot = dkim_per_target[slot_start:slot_start + n_sel]
+            for sel, got in zip(DKIM_SELECTORS, slot):
+                filtered = [r for r in got if "v=DKIM1" in r or "k=" in r or "p=" in r]
+                if filtered:
+                    dkim_records = filtered
+                    dkim_selector_hit = sel
+                    dkim_at = target
+                    break
+            if dkim_records:
+                break
+
+        # ---- MX-aware skip ----
+        # If the input host is a subdomain (3+ labels), and we found NO email
+        # records and NO MX anywhere in its parent chain, this isn't a
+        # mail-sending host. Treat as link-out: the scanner ran successfully,
+        # but there's nothing to grade. The aggregator excludes link-outs from
+        # the overall score, so a webapp subdomain doesn't drag the average.
+        if is_subdomain and not spf_records and not dmarc_records and not has_mx:
+            return ScanResult(
+                scanner=self.name, ok=True, grade=None, score=None,
+                summary=(
+                    f"Skipped: {host} is a subdomain with no MX, SPF, or DMARC anywhere "
+                    f"up to {apex}. Not a mail-sending host."
+                ),
+                findings=[Finding(
+                    severity="info",
+                    title=f"Email auth not applicable to {host}",
+                    detail=(
+                        f"Walked parent chain [{', '.join(parents)}] looking for SPF, "
+                        f"DMARC, or MX records. Found none. Subdomains that don't send or "
+                        f"receive mail don't need their own email-auth records - that "
+                        f"protection lives at the apex ({apex}) for the whole zone."
+                    ),
+                )],
+                link=link,
+            )
+
+        # ---- Score (same scoring math as before, against the records we found) ----
+        spf_hits_records = [r for r in spf_records if r.lower().startswith("v=spf1")]
+        spf_qualifier = _parse_spf_policy(spf_hits_records[0]) if spf_hits_records else ""
+        dmarc_hits_records = [r for r in dmarc_records if r.lower().startswith("v=dmarc1")]
+        dmarc_p, dmarc_sp = _parse_dmarc_policy(dmarc_hits_records[0]) if dmarc_hits_records else ("", "")
+
         score = 0
         # SPF: 35 pts. Strict (-all) full credit, soft (~all) most, neutral half.
         if spf_qualifier == "-":
@@ -172,7 +277,7 @@ class EmailAuthScanner:
             score += 28
         elif spf_qualifier in ("?", "+"):
             score += 14
-        elif spf_hits:
+        elif spf_hits_records:
             score += 10  # SPF exists but no `all` qualifier - sloppy
         # DMARC: 45 pts. reject > quarantine > none.
         if dmarc_p == "reject":
@@ -199,11 +304,24 @@ class EmailAuthScanner:
             grade = "F"
 
         # ---- Findings ----
-        if not spf_hits:
+        findings: list[Finding] = []
+
+        # Helper for the "found via parent" suffix in titles when records live
+        # on an ancestor rather than the input host.
+        def _at_suffix(at: str | None) -> str:
+            if at is None or at == host:
+                return ""
+            return f" (on {at}, inherited by {host})"
+
+        if not spf_hits_records:
             findings.append(Finding(
                 severity="high",
                 title="No SPF record published",
-                detail="Without SPF, any IP can send mail claiming to be from your domain.",
+                detail=(
+                    f"Walked {host}"
+                    + (f" -> {' -> '.join(parents[1:])}" if len(parents) > 1 else "")
+                    + ". No SPF found at any level."
+                ),
                 recommendation=(
                     "Publish a TXT record on the apex domain like "
                     "'v=spf1 include:_spf.<your-mail-provider> -all'. "
@@ -213,75 +331,79 @@ class EmailAuthScanner:
         elif spf_qualifier == "":
             findings.append(Finding(
                 severity="medium",
-                title="SPF record has no `all` qualifier",
-                detail=f"Found: {spf_hits[0][:120]}",
+                title="SPF record has no `all` qualifier" + _at_suffix(spf_at),
+                detail=f"Found: {spf_hits_records[0][:120]}",
                 recommendation="Append '-all' (or at minimum '~all') to your SPF record.",
             ))
         elif spf_qualifier == "+":
             findings.append(Finding(
                 severity="high",
-                title="SPF policy ends in `+all` (passes everyone)",
-                detail=f"Found: {spf_hits[0][:120]}",
+                title="SPF policy ends in `+all` (passes everyone)" + _at_suffix(spf_at),
+                detail=f"Found: {spf_hits_records[0][:120]}",
                 recommendation="`+all` is equivalent to no SPF. Replace with `-all`.",
             ))
         elif spf_qualifier == "?":
             findings.append(Finding(
                 severity="low",
-                title="SPF policy is neutral (`?all`)",
-                detail=f"Found: {spf_hits[0][:120]}",
+                title="SPF policy is neutral (`?all`)" + _at_suffix(spf_at),
+                detail=f"Found: {spf_hits_records[0][:120]}",
                 recommendation="Tighten to '-all' once you're confident your sender list is complete.",
             ))
         elif spf_qualifier == "~":
             findings.append(Finding(
                 severity="info",
-                title="SPF policy is softfail (`~all`)",
-                detail=f"Found: {spf_hits[0][:120]}",
+                title="SPF policy is softfail (`~all`)" + _at_suffix(spf_at),
+                detail=f"Found: {spf_hits_records[0][:120]}",
                 recommendation="Consider tightening to '-all' (hard fail) for stronger anti-spoofing.",
             ))
         else:
             findings.append(Finding(
                 severity="info",
-                title="SPF policy is hardfail (`-all`)",
-                detail=f"Found: {spf_hits[0][:120]}",
+                title="SPF policy is hardfail (`-all`)" + _at_suffix(spf_at),
+                detail=f"Found: {spf_hits_records[0][:120]}",
             ))
-        if len(spf_hits) > 1:
+        if len(spf_hits_records) > 1:
             findings.append(Finding(
                 severity="medium",
-                title=f"Multiple SPF records on {host}",
+                title=f"Multiple SPF records on {spf_at or host}",
                 detail="RFC 7208 §3.2 requires exactly one. Receivers may reject the lookup as PermError.",
                 recommendation="Merge into a single TXT record.",
             ))
 
-        if not dmarc_hits:
+        if not dmarc_hits_records:
             findings.append(Finding(
                 severity="high",
                 title="No DMARC record published",
-                detail="Without DMARC, receivers have no instruction on what to do with SPF/DKIM failures.",
+                detail=(
+                    f"Walked _dmarc.{host}"
+                    + (f" -> " + " -> ".join(f"_dmarc.{p}" for p in parents[1:]) if len(parents) > 1 else "")
+                    + ". No DMARC found at any level."
+                ),
                 recommendation=(
-                    "Publish a TXT record at _dmarc.<host> like "
-                    "'v=DMARC1; p=quarantine; rua=mailto:dmarc-reports@<host>'. "
+                    "Publish a TXT record at _dmarc.<apex> like "
+                    "'v=DMARC1; p=quarantine; rua=mailto:dmarc-reports@<apex>'. "
                     "Start with `p=none` for monitoring, ramp to `quarantine`, then `reject`."
                 ),
             ))
         elif dmarc_p == "none":
             findings.append(Finding(
                 severity="medium",
-                title="DMARC policy is `p=none` (monitoring only)",
-                detail=f"Found: {dmarc_hits[0][:140]}",
+                title="DMARC policy is `p=none` (monitoring only)" + _at_suffix(dmarc_at),
+                detail=f"Found: {dmarc_hits_records[0][:140]}",
                 recommendation="`p=none` only collects reports. Move to `p=quarantine`, then `p=reject` once your senders are aligned.",
             ))
         elif dmarc_p == "quarantine":
             findings.append(Finding(
                 severity="low",
-                title="DMARC policy is `p=quarantine`",
-                detail=f"Found: {dmarc_hits[0][:140]}",
+                title="DMARC policy is `p=quarantine`" + _at_suffix(dmarc_at),
+                detail=f"Found: {dmarc_hits_records[0][:140]}",
                 recommendation="Once you've verified DMARC reports show no false positives, move to `p=reject` for full anti-spoofing.",
             ))
         elif dmarc_p == "reject":
             findings.append(Finding(
                 severity="info",
-                title="DMARC policy is `p=reject`",
-                detail=f"Found: {dmarc_hits[0][:140]}",
+                title="DMARC policy is `p=reject`" + _at_suffix(dmarc_at),
+                detail=f"Found: {dmarc_hits_records[0][:140]}",
             ))
         # Subdomain policy if present - flag if weaker than main.
         if dmarc_sp and dmarc_p:
@@ -298,24 +420,32 @@ class EmailAuthScanner:
                 severity="low",
                 title="No DKIM key found at common selectors",
                 detail=(
-                    "Probed: " + ", ".join(DKIM_SELECTORS) + ". DKIM may still be configured "
-                    "with a non-default selector - this is not a definitive miss."
+                    "Probed: " + ", ".join(DKIM_SELECTORS) + " on "
+                    + (f"{host} and {apex}" if host != apex else host)
+                    + ". DKIM may still be configured with a non-default selector - this is not a definitive miss."
                 ),
                 recommendation=(
                     "Make sure your mail provider's DKIM is published (selector is provider-specific)."
                 ),
             ))
         else:
+            dkim_target_suffix = "" if dkim_at == host else f" on {dkim_at}"
             findings.append(Finding(
                 severity="info",
-                title=f"DKIM key found at selector `{dkim_selector_hit}`",
+                title=f"DKIM key found at selector `{dkim_selector_hit}`{dkim_target_suffix}",
                 detail=dkim_records[0][:160] + ("…" if len(dkim_records[0]) > 160 else ""),
             ))
 
         # ---- Summary line ----
         bits = []
-        bits.append("SPF " + (spf_qualifier + "all" if spf_qualifier else "missing" if not spf_hits else "no-all"))
-        bits.append("DMARC " + (f"p={dmarc_p}" if dmarc_p else "missing"))
+        if spf_at and spf_at != host:
+            bits.append(f"SPF on {spf_at}")
+        else:
+            bits.append("SPF " + (spf_qualifier + "all" if spf_qualifier else "missing" if not spf_hits_records else "no-all"))
+        if dmarc_at and dmarc_at != host:
+            bits.append(f"DMARC on {dmarc_at} (p={dmarc_p})")
+        else:
+            bits.append("DMARC " + (f"p={dmarc_p}" if dmarc_p else "missing"))
         bits.append("DKIM " + (f"sel={dkim_selector_hit}" if dkim_records else "not found"))
         summary = "; ".join(bits)
 

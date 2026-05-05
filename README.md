@@ -1,6 +1,6 @@
 # Url Reporter (CLI)
 
-> Current version: **v0.0.39**. See [CHANGELOG.md](./CHANGELOG.md) for release notes.
+> Current version: **v0.0.42**. See [CHANGELOG.md](./CHANGELOG.md) for release notes.
 
 CLI tool that runs a URL through twelve public security scanners in parallel and writes a consolidated report to disk. Passive only: every check either reads a third-party scanner's API or does a single GET to the target.
 
@@ -11,6 +11,7 @@ git clone https://github.com/pdiomede/urlreportercli.git
 cd urlreportercli
 python3 -m venv .venv
 source .venv/bin/activate
+pip install --upgrade pip
 pip install -e .
 ./bin/fix-venv-launcher    # only needed in iCloud Drive; no-op otherwise
 ```
@@ -86,7 +87,7 @@ Generated reports live in `./reports/`. After each scanner finishes, the report 
 
 ## Credits
 
-Url Reporter v0.0.39, made by [Paolo Diomede](https://pdiomede.com).
+Url Reporter v0.0.42, made by [Paolo Diomede](https://pdiomede.com).
 
 ## License
 

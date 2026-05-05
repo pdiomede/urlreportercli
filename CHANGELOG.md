@@ -9,6 +9,29 @@ This is the CLI distribution. Entries here are limited to changes that affect th
 
 ## [Unreleased]
 
+## [0.0.42] - 2026-05-05
+
+### Changed (email_auth scanner: parent-walk + MX-aware skip)
+- **`urlreporter/scanners/email_auth.py` rewritten** to walk up the parent chain for SPF and DMARC lookups instead of probing only the input host. SPF/DMARC records are typically published at the registered domain (apex), not on every subdomain — scanning `app.example.com` previously produced an F=0 even when `example.com` was correctly configured. Now the scanner walks parents and uses the closest ancestor's records, with findings annotated to indicate where each record lives (e.g. *"DMARC policy is `p=reject` (on example.com, inherited by app.example.com)"*).
+- **MX-aware skip for non-mail-sending subdomains.** When the input host is a subdomain (≥3 labels) with no SPF, DMARC, or MX records anywhere up the chain, the scanner returns a link-out result instead of an F. Webapp hosts that don't send or receive mail aren't graded as if they were broken; they're excluded from the overall via the existing link-out aggregation rule.
+- **DKIM probing now also targets the apex** when scanning a subdomain — picks up apex-level DKIM keys that protect the whole zone.
+- **New module-level helpers** in `email_auth.py`: `_parent_domains`, `_doh_answers`, `_doh_has_mx`.
+
+### Notes
+- **Backward compatible scoring for apex scans** with directly-published SPF + DMARC + DKIM. Same grade as before. The change only affects subdomains and edge cases previously producing false-positive Fs.
+- **No new dependencies** — uses the same Cloudflare DoH endpoint already in place.
+- **No changes to runner, grading thresholds, report renderers, or CLI flags.**
+
+## [0.0.41] - 2026-05-05
+
+### Changed (README install block)
+- **`pip install --upgrade pip` added as a step in the README install instructions.** Ensures new users start with a current pip (better dependency resolver, no "new pip version available" notice mid-install). No engine, scanner, grading, or CLI runtime changes — README copy edit only.
+
+## [0.0.40] - 2026-05-05
+
+### Notes
+- **Version sync.** No engine, scanner, grading, or CLI changes. Patch level bumped to align with the urlreporter (web) repo's documentation update covering report-cleanup ops in production.
+
 ## [0.0.39] - 2026-05-05
 
 ### Notes
