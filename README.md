@@ -1,6 +1,6 @@
 # Url Reporter (CLI)
 
-> Current version: **v0.0.44**. See [CHANGELOG.md](./CHANGELOG.md) for release notes.
+> Current version: **v0.0.45**. See [CHANGELOG.md](./CHANGELOG.md) for release notes.
 
 CLI tool that runs a URL through twelve public security scanners in parallel and writes a consolidated report to disk. Passive only: every check either reads a third-party scanner's API or does a single GET to the target.
 
@@ -87,7 +87,7 @@ Generated reports live in `./reports/`. After each scanner finishes, the report 
 
 ## Credits
 
-Url Reporter v0.0.44, made by [Paolo Diomede](https://pdiomede.com).
+Url Reporter v0.0.45, made by [Paolo Diomede](https://pdiomede.com).
 
 ## License
 

@@ -9,6 +9,16 @@ This is the CLI distribution. Entries here are limited to changes that affect th
 
 ## [Unreleased]
 
+## [0.0.45] - 2026-05-05
+
+### Fixed (securityheaders.com scanner: local grade synthesis when third-party blocks us)
+- **`urlreporter/scanners/security_headers.py` now computes the headers grade locally when securityheaders.com is unreachable.** Cloudflare bot protection on securityheaders.com is now blocking non-browser User-Agents with an HTTP 403 + JS challenge, so neither the `X-Grade` header path nor the v0.0.44 HTML body fallback can succeed from a server. The fix uses the already-fetched target response headers and a calibrated penalty table (high-severity miss = -25, medium = -15, low = -5, starting from 100) to synthesize a grade locally, then maps it through `score_to_letter`. Summary makes the grade source explicit when local synthesis fires.
+- **Order of preference unchanged.** When securityheaders.com returns a real grade, that takes precedence; local synthesis is fallback only.
+
+### Notes
+- **No new dependencies, no API calls added.** Local grading uses response headers the scanner was already fetching.
+- **Docs synced.** The `/scanners` page (web) and `README_WEB.md` scanner table both updated to describe the new fallback behavior; the CLI `README.md` doesn't enumerate scanners individually so no copy changed there.
+
 ## [0.0.44] - 2026-05-05
 
 ### Fixed (securityheaders.com scanner: HTML fallback for removed X-Grade header)

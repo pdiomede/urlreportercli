@@ -7,7 +7,7 @@ from urllib.parse import quote, urlparse
 
 import httpx
 
-from ..grading import letter_to_score
+from ..grading import letter_to_score, score_to_letter
 from ._retry import RetryExhausted, describe_exc, retry_request
 from .base import Finding, ScanResult
 
@@ -45,6 +45,11 @@ EXPECTED_HEADERS: dict[str, tuple[str, str]] = {
         "Add a Permissions-Policy header restricting unused browser features.",
     ),
 }
+
+# Penalty (out of 100) for each missing header by severity. Calibrated so that
+# a site missing every modern header lands in F territory and one with all
+# headers present scores A+.
+_SEVERITY_PENALTY: dict[str, int] = {"high": 25, "medium": 15, "low": 5}
 
 
 class SecurityHeadersScanner:
@@ -107,13 +112,16 @@ class SecurityHeadersScanner:
         )
 
         findings: list[Finding] = []
+        synth_score: int | None = None
         if target_resp is not None:
             present = {k.lower(): v for k, v in target_resp.headers.items()}
             scheme = urlparse(str(target_resp.url)).scheme
+            synth_score = 100
             for header, (severity, recommendation) in EXPECTED_HEADERS.items():
                 if header == "strict-transport-security" and scheme != "https":
                     continue
                 if header not in present:
+                    synth_score -= _SEVERITY_PENALTY.get(severity, 10)
                     findings.append(
                         Finding(
                             severity=severity,  # type: ignore[arg-type]
@@ -122,23 +130,38 @@ class SecurityHeadersScanner:
                             recommendation=recommendation,
                         )
                     )
+            synth_score = max(0, synth_score)
 
-        score = letter_to_score(grade) if grade else None
+        # Prefer securityheaders.com's grade when available; fall back to the
+        # locally-computed grade when it isn't (rate-limited, bot-challenged,
+        # or X-Grade header dropped without an HTML fallback we can parse).
         if grade is not None:
+            score = letter_to_score(grade)
             summary = f"Headers grade {grade}"
-        elif findings:
-            # We at least produced findings from our own header check.
-            summary = f"Grade unavailable; inferred {len(findings)} missing header(s) from direct response."
+            ok = True
+            error: str | None = None
+        elif synth_score is not None:
+            grade = score_to_letter(synth_score)
+            score = synth_score
+            summary = (
+                f"Headers grade {grade} ({synth_score}/100) — graded locally; "
+                "securityheaders.com unreachable."
+            )
+            ok = True
+            error = None
         else:
+            score = None
             summary = "Headers grade unavailable"
+            ok = False
+            error = grade_error
 
         return ScanResult(
             scanner=self.name,
-            ok=grade is not None or bool(findings),
+            ok=ok,
             grade=grade,
             score=score,
             summary=summary,
             findings=findings,
             link=link,
-            error=grade_error if grade is None else None,
+            error=error,
         )
