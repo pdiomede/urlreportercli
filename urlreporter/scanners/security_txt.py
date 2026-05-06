@@ -115,6 +115,12 @@ class SecurityTxtScanner:
         body: str | None = None
         served_at: str | None = None
         last_error: str | None = None
+        # Track whether we got at least one definitive HTTP response (200, 404,
+        # 403, 410, or any other status). If both paths failed at the network
+        # level (RetryExhausted, TLS error, etc.) we cannot conclude the file
+        # is absent — only that we couldn't fetch. Without this distinction,
+        # an unreachable host gets a misleading B-/70 "no security.txt" grade.
+        got_definitive_response = False
         # Canonical-first: prefer /.well-known/security.txt, fall back to
         # /security.txt only if the canonical path didn't produce a usable file.
         for path in (WELLKNOWN_PATH, LEGACY_PATH):
@@ -126,6 +132,7 @@ class SecurityTxtScanner:
                 continue
             if r is None:
                 continue
+            got_definitive_response = True
             if r.status_code == 200:
                 ctype = (r.headers.get("content-type") or "").lower()
                 # text/plain is RFC-mandated, but be pragmatic: many sites
@@ -148,6 +155,16 @@ class SecurityTxtScanner:
         findings: list[Finding] = []
 
         if body is None:
+            if not got_definitive_response:
+                # Both fetches failed at the transport layer. We cannot tell
+                # whether security.txt is published or not — surface as scanner
+                # failure rather than fabricating a "no security.txt" grade.
+                log.error("%s: every candidate fetch failed: %s", self.name, last_error)
+                return ScanResult(
+                    scanner=self.name, ok=False,
+                    error=f"Could not fetch security.txt from {host}: {last_error or 'all attempts failed'}",
+                    link=link,
+                )
             findings.append(Finding(
                 severity="low",
                 title="No security.txt file found",

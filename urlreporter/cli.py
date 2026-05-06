@@ -197,11 +197,10 @@ class _IncrementalWriter:
     Ctrl-C / kill / engine exception mid-scan still leaves a usable
     report file on disk. Mirrors web._write_partial_report()."""
 
-    def __init__(self, *, url: str, md_path: Path, html_path: Path | None,
+    def __init__(self, *, url: str, md_path: Path,
                  cfg_files: list[str], log_path: str | None = None) -> None:
         self.url = url
         self.md_path = md_path
-        self.html_path = html_path
         self.cfg_files = cfg_files
         self.log_path = log_path
         self._scanner_order: list[str] = []
@@ -239,8 +238,10 @@ class _IncrementalWriter:
         try:
             self.md_path.parent.mkdir(parents=True, exist_ok=True)
             self.md_path.write_text(render_markdown(report, log_path=self.log_path), encoding="utf-8")
-            if self.html_path is not None:
-                self.html_path.write_text(render_html(report, log_path=self.log_path), encoding="utf-8")
+            # HTML is rendered once at the end by the CLI main loop (using
+            # writer.last_report on the interrupt path). Re-rendering the
+            # full inline-CSS HTML after every scanner is wasted work;
+            # nobody reads the partial HTML mid-scan.
             self.last_report = report
         except OSError:
             # Disk error mid-scan must not sink the live scan; the runner
@@ -311,7 +312,6 @@ def scan(url: str, config_path: Path | None, out_path: Path | None, quiet: bool,
     writer = _IncrementalWriter(
         url=target,
         md_path=out_path,
-        html_path=html_path,
         cfg_files=[str(p) for p in cfg.source_files],
         log_path=str(log_path) if log_path else None,
     )

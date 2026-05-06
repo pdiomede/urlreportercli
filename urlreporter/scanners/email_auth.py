@@ -44,9 +44,21 @@ def _parent_domains(host: str) -> list[str]:
 
 
 async def _doh_answers(client: httpx.AsyncClient, name: str, rrtype: str, *, label: str) -> list[dict]:
-    """Generic DoH JSON lookup. Returns the raw `Answer` array on success,
-    or [] on miss (NXDOMAIN, no answers, transport failure). Raises
-    RetryExhausted only when every retry is a transient HTTP / network error."""
+    """Generic DoH JSON lookup.
+
+    Returns the raw `Answer` array on a *definitive* answer:
+      - Status=0 NOERROR (Answer may be empty — record genuinely absent), or
+      - Status=3 NXDOMAIN (queried name doesn't exist — for SPF/DMARC parent
+        walking this is the correct "no record at this level" signal).
+
+    Raises RetryExhausted on any other failure: transport error, non-200
+    HTTP status (after retry_request already considered transient retries),
+    JSON parse failure, or non-zero RCODE other than NXDOMAIN. Silently
+    returning [] on these would conflate "record absent" with "lookup failed".
+    That's fine for a single missing TXT but dangerous when ALL lookups fail
+    and the caller concludes "non-mail-sending host" via the subdomain-skip
+    rule — we'd silently emit a benign link-out for what's actually a DoH
+    outage."""
     try:
         resp = await retry_request(
             lambda: client.get(
@@ -61,13 +73,18 @@ async def _doh_answers(client: httpx.AsyncClient, name: str, rrtype: str, *, lab
         raise
     except (httpx.HTTPError, ValueError) as e:
         log.warning("%s DoH error for %s/%s: %s", label, name, rrtype, describe_exc(e))
-        return []
-    if resp.status_code >= 400:
-        return []
+        raise RetryExhausted(f"{label}: {describe_exc(e)}") from e
+    if resp.status_code != 200:
+        raise RetryExhausted(f"{label}: DoH returned HTTP {resp.status_code}")
     try:
         data = resp.json()
-    except ValueError:
-        return []
+    except ValueError as e:
+        raise RetryExhausted(f"{label}: DoH returned non-JSON body") from e
+    rcode = data.get("Status", 0)
+    if rcode not in (0, 3):
+        # SERVFAIL/REFUSED/NOTIMP/FORMERR: resolver-side or client-side
+        # failure. Not "no record" — surface as scanner failure.
+        raise RetryExhausted(f"{label}: DoH returned RCODE {rcode}")
     return list(data.get("Answer") or [])
 
 

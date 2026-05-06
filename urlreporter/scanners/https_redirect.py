@@ -36,9 +36,25 @@ class HTTPSRedirectScanner:
                 label=self.name, logger=log,
             )
         except RetryExhausted as e:
-            # If every attempt was a connection refused (HTTPS-only host), treat as A.
+            # `httpx.ConnectError` is the umbrella for refused, DNS failure
+            # (gaierror), and network-unreachable. Only ECONNREFUSED actually
+            # means "HTTPS-only host" — treating DNS failure as A would falsely
+            # green-grade a typo or expired domain. Walk the cause chain for
+            # ConnectionRefusedError (Python's stdlib type for ECONNREFUSED);
+            # fall back to a string match because httpx doesn't always preserve
+            # the chain across the httpcore wrap.
             inner = e.last_exception
+            is_refused = False
             if isinstance(inner, httpx.ConnectError):
+                cause: BaseException | None = inner
+                while cause is not None:
+                    if isinstance(cause, ConnectionRefusedError):
+                        is_refused = True
+                        break
+                    cause = cause.__cause__
+                if not is_refused and "refused" in str(inner).lower():
+                    is_refused = True
+            if is_refused:
                 return ScanResult(
                     scanner=self.name, ok=True, grade="A", score=90,
                     summary="Plain http:// is not served at all (HTTPS-only host).",

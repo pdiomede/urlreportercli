@@ -59,8 +59,13 @@ class DNSSECScanner:
         rcode = data.get("Status", 0)
 
         if rcode != 0:
-            # Translate the RCODE into a useful human message and recommendation
-            # rather than always blaming DNSSEC.
+            # Translate the RCODE into a useful human message. Only SERVFAIL
+            # (rcode 2) is a legitimate target-side DNSSEC failure that warrants
+            # an F grade; the others are scanner-side, resolver-side, or input
+            # errors and must NOT pull the weight-2.0 grade down by being
+            # marked ok=True with score 0. NXDOMAIN means the domain doesn't
+            # exist, REFUSED/NOTIMP mean the resolver wouldn't or couldn't
+            # answer, FORMERR means we sent a malformed query.
             rcode_meta = {
                 1: ("FORMERR (1)", "The query was malformed; usually a client bug, not a domain issue."),
                 2: ("SERVFAIL (2)", "Often a broken DNSSEC chain. Check DS records at the registrar; mismatched DS to DNSKEY causes SERVFAIL."),
@@ -72,15 +77,21 @@ class DNSSECScanner:
                 rcode,
                 (f"RCODE {rcode}", "Non-zero DNS RCODE returned; see RFC 1035 / 6895 for the meaning."),
             )
+            if rcode == 2:
+                return ScanResult(
+                    scanner=self.name, ok=True, grade="F", score=0,
+                    summary=f"DNS resolution returned {label}.",
+                    findings=[Finding(
+                        severity="high",
+                        title=f"DNS resolution failed: {label}",
+                        detail=f"The resolver returned RCODE {rcode}.",
+                        recommendation=advice,
+                    )],
+                    link=link,
+                )
             return ScanResult(
-                scanner=self.name, ok=True, grade="F", score=0,
-                summary=f"DNS resolution returned {label}.",
-                findings=[Finding(
-                    severity="high",
-                    title=f"DNS resolution failed: {label}",
-                    detail=f"The resolver returned RCODE {rcode}.",
-                    recommendation=advice,
-                )],
+                scanner=self.name, ok=False,
+                error=f"DoH returned {label}: {advice}",
                 link=link,
             )
 
