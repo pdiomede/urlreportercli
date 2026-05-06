@@ -7,6 +7,11 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.0.48] - 2026-05-06
+
+### Notes
+- **Version-only bump to track the web release.** v0.0.48 ships a small web-side `robots.txt` adjustment (now disallowing `/version`, the polling endpoint added in v0.0.47). No CLI surface is affected — no scanner, runner, grading, report, or CLI-flag behavior changed.
+
 ## [0.0.47] - 2026-05-06
 
 ### Notes

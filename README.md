@@ -1,6 +1,6 @@
 # Url Reporter
 
-> Live at **[urlreporter.com](https://urlreporter.com)**. Current version: **v0.0.47**. See [CHANGELOG.md](./CHANGELOG.md) for release notes.
+> Live at **[urlreporter.com](https://urlreporter.com)**. Current version: **v0.0.48**. See [CHANGELOG.md](./CHANGELOG.md) for release notes.
 
 ## What it does
 
@@ -170,7 +170,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/). All changes a
 
 ## Credits
 
-Url Reporter v0.0.47, made by [Paolo Diomede](https://pdiomede.com).
+Url Reporter v0.0.48, made by [Paolo Diomede](https://pdiomede.com).
 
 ## License
 
