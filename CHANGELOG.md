@@ -7,6 +7,11 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.0.47] - 2026-05-06
+
+### Notes
+- **Version-only bump to track the web release.** v0.0.47 ships a web-UI feature (an in-page "new version available" banner driven by a polling `/version` endpoint) plus a small progress-page tagline tweak. Neither affects the CLI surface — no scanner, runner, grading, report, or CLI-flag behavior changed. The version is bumped here purely to keep `pyproject.toml` / `__version__` in sync with the web release.
+
 ## [0.0.45] - 2026-05-05
 
 ### Fixed (securityheaders.com scanner: local grade synthesis when third-party blocks us)

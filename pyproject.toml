@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "urlreporter"
-version = "0.0.46"
+version = "0.0.47"
 description = "CLI tool that aggregates public security scanners into one report for a URL."
 readme = "README.md"
 requires-python = ">=3.11"
