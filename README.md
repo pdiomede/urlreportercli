@@ -1,6 +1,6 @@
 # Url Reporter
 
-> Live at **[urlreporter.com](https://urlreporter.com)**. Current version: **v0.0.48**. See [CHANGELOG.md](./CHANGELOG.md) for release notes.
+> Live at **[urlreporter.com](https://urlreporter.com)**. Current version: **v0.0.55**. See [CHANGELOG.md](./CHANGELOG.md) for release notes.
 
 ## What it does
 
@@ -11,8 +11,8 @@ Paste a URL and get one report on how exposed the site is, drawn from twelve pub
 
 Two ways to use it:
 
-- **CLI** (`urlreporter scan <url>`): prints the summary to your terminal with a live per-scanner progress block and saves the Markdown report to `./reports/`. Pass `--html` to also save the self-contained HTML report. Reports are written incrementally after every scanner finishes, so a `Ctrl-C` mid-scan still leaves a usable file on disk.
-- **Web UI** (`./runUrlReporter.sh`): paste a URL, watch a live progress page (real-time bar + per-scanner emoji status table), then read the result page and click either *Download HTML* or *Download Markdown*. Reports are written to disk after each scanner finishes, so even if the server is killed mid-scan you still get a file with everything that completed.
+- **CLI** (`urlreporter scan <url>`): prints the summary to your terminal with a live per-scanner progress block and saves the Markdown report to `./reports/`. Pass `--html` to also save the self-contained HTML report. The Markdown report is written incrementally after every scanner finishes, so a `Ctrl-C` mid-scan still leaves a usable file on disk; the HTML sibling is written at completion or from the latest partial report on interrupt.
+- **Web UI** (`./runUrlReporter.sh`): paste a URL, watch a live progress page (real-time bar + per-scanner emoji status table), then read the result page and click either *Download HTML* or *Download Markdown*. Markdown is written to disk after each scanner finishes, so even if the server is killed mid-scan the `.md` file has everything that completed; the heavier self-contained HTML file is written when the scan reaches its final result or error state.
 
 The tool is **passive**: every check either reads a third-party scanner's API or does a single GET to the target. It generates no load, sends no payloads, and requires no authorization to scan any public URL.
 
@@ -27,7 +27,7 @@ By default `urlreporter` queries:
 | 3 | [securityheaders.com](https://securityheaders.com/) | HTTP security headers (letter grade). Now sits behind Cloudflare bot protection, so when the third-party probe gets a JS challenge, Url Reporter fetches the target&#39;s headers itself and computes a letter grade locally with a calibrated penalty table. |
 | 4 | [internet.nl](https://internet.nl/) | Web standards: TLS, DNSSEC, IPv6, mail. **Link-out** unless an API token is configured (no free single-scan API). |
 | 5 | [hstspreload.org](https://hstspreload.org/) | Whether the domain is on the Chrome HSTS preload list. |
-| 6 | [crt.sh](https://crt.sh/) | Certificate Transparency: every cert ever issued, graded by CA concentration over the last 90 days. |
+| 6 | [crt.sh](https://crt.sh/) + [CertSpotter](https://sslmate.com/certspotter/) | Certificate Transparency: every cert ever issued, graded by CA concentration over the last 90 days. crt.sh is the primary; falls over to CertSpotter (different operator, same CT data) when crt.sh exhausts retries. If both are unreachable, the row degrades to a link-out instead of a red ERROR. |
 | 7 | CAA records (via Cloudflare DoH) | DNS-level pin on which CAs may issue certs for the domain (walks up to inherited records). |
 | 8 | DNSSEC (via Cloudflare DoH) | Whether the zone is signed and validates to the root (`AD` flag). |
 | 9 | HTTP→HTTPS redirect | Calls `http://<host>` and walks the redirect chain; flags missing redirects, intermediate http hops, and cross-host detours. |
@@ -35,7 +35,7 @@ By default `urlreporter` queries:
 | 11 | Email auth (SPF / DMARC / DKIM) | TXT lookups via Cloudflare DoH for SPF on the apex, DMARC on `_dmarc.<host>`, and DKIM probed across 10 common selectors. Scores by policy strictness (`-all` > `~all` > `+all`; `p=reject` > `p=quarantine` > `p=none`). |
 | 12 | security.txt (RFC 9116) | Fetches `/.well-known/security.txt` (then `/security.txt` as legacy fallback), parses it, and grades on canonical-location compliance, `Contact:` presence, and a parseable, future-dated `Expires:` field. |
 
-Failed scanners are isolated: one timing out, erroring, or returning garbage does not stop the others. Every outbound HTTP call retries on transient errors (5xx, 429, network timeouts) before reporting failure. Reports are written incrementally as each scanner finishes, so even if the web server is killed mid-scan the report file on disk reflects everything that completed.
+Failed scanners are isolated: one timing out, erroring, or returning garbage does not stop the others. Every outbound HTTP call retries on transient errors (5xx, 429, network timeouts) before reporting failure. Markdown reports are written incrementally as each scanner finishes, so even if the web server is killed mid-scan the `.md` file on disk reflects everything that completed.
 
 ## Architecture
 
@@ -85,7 +85,7 @@ The CLI also exposes a methodology page equivalent to the web UI's `/score`:
 urlreporter explain-score
 ```
 
-Reports are written **incrementally** after every scanner finishes, so a Ctrl-C mid-scan or an unexpected engine error still leaves a usable file on disk with everything that completed (and the same is true for the `.html` sibling when `--html` is set).
+Markdown reports are written **incrementally** after every scanner finishes, so a Ctrl-C mid-scan or an unexpected engine error still leaves a usable `.md` file on disk with everything that completed. When `--html` is set, the self-contained HTML sibling is written at completion, or from the latest partial report if the CLI exits through its interrupt/error handler.
 
 Exit codes: `0` on success, `1` if every scanner failed (or the engine raised mid-flight), `2` for argument errors, `130` if the scan was interrupted with Ctrl-C (POSIX convention for SIGINT; partial report still on disk).
 
@@ -98,7 +98,7 @@ Exit codes: `0` on success, `1` if every scanner failed (or the engine raised mi
 CH_RELOAD=1 ./runUrlReporter.sh # uvicorn auto-reload (dev)
 ```
 
-Then open http://localhost:8000. The form lets you check/uncheck scanners and override the `config.env` defaults per scan. **Select all** / **Deselect all** buttons toggle the whole list at once.
+Then open http://localhost:8000. The web form uses the scanner defaults from `config.env`; for one-off scanner subsets, use the CLI's `--only` option.
 
 ## Configuration (`config.env`)
 
@@ -129,11 +129,11 @@ Every process run creates `./logs/error_<YYYYMMDD-HHMMSS>.log`. WARNING and abov
 
 ## Reports
 
-Generated reports live in `./reports/`. After each scanner finishes, the web app re-writes the report on disk in two formats: `<id>.md` (Markdown) and `<id>.html` (self-contained HTML, with embedded styles and a print stylesheet). A `<id>.name` sibling holds the human-friendly filename used for the download. All three are removed when older than 24 hours.
+Generated reports live in `./reports/`. The web app re-writes `<id>.md` (Markdown) after each scanner finishes, then writes `<id>.html` (self-contained HTML, with embedded styles and a print stylesheet) when the scan reaches its final result or error state. A `<id>.name` sibling holds the human-friendly filename used for the download. All three are removed when older than 24 hours.
 
 ### Cleanup in production
 
-The in-app `_cleanup_old_reports()` (in `web.py`) runs **once at uvicorn startup** and prunes the three siblings for any report older than 24h. That's enough for short-lived processes, but a long-running production uvicorn lets old files accumulate between restarts. The recommended complement is an external scheduler that runs hourly:
+The in-app `_cleanup_old_reports()` (in `web.py`) runs **once at uvicorn startup** and prunes stale `.md`, `.html`, and `.name` files older than 24h, including orphaned sidecars. That's enough for short-lived processes, but a long-running production uvicorn lets old files accumulate between restarts. The recommended complement is an external scheduler that runs hourly:
 
 ```bash
 # /usr/local/bin/urlreporter-cleanup
@@ -170,7 +170,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/). All changes a
 
 ## Credits
 
-Url Reporter v0.0.48, made by [Paolo Diomede](https://pdiomede.com).
+Url Reporter v0.0.55, made by [Paolo Diomede](https://pdiomede.com).
 
 ## License
 

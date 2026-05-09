@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import re
 import socket
@@ -81,10 +82,13 @@ def normalize_url(raw: str | None) -> str:
         # No scheme present at all - default to https.
         s = "https://" + s.lstrip("/")
 
-    parsed = urlparse(s)
+    try:
+        parsed = urlparse(s)
+        host = parsed.hostname
+    except ValueError as e:
+        raise InvalidURL(f"Invalid URL: {e}.") from e
     if parsed.scheme not in ALLOWED_SCHEMES:
         raise InvalidURL(f"Unsupported URL scheme: {parsed.scheme!r}.")
-    host = parsed.hostname
     if not host:
         raise InvalidURL("URL is missing a hostname.")
     if not _is_valid_host(host):
@@ -101,7 +105,7 @@ def normalize_url(raw: str | None) -> str:
     # Strip fragment and any userinfo; keep path/query intact for the scanners.
     # IPv6 hosts must keep their brackets in the netloc (urlparse strips them
     # when returning .hostname), otherwise `[::1]:8080` becomes `::1:8080`.
-    host_text = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+    host_text = f"[{host}]" if ":" in host else host
     netloc = f"{host_text}:{port}" if port is not None else host_text
     canonical = urlunparse((
         parsed.scheme,
@@ -116,11 +120,27 @@ def normalize_url(raw: str | None) -> str:
 
 def _is_valid_host(host: str) -> bool:
     # urlparse strips IPv6 brackets and returns the literal address; if there's
-    # any colon at this point, treat it as an IPv6 literal (cheap accept).
+    # any colon at this point, require an actual IPv6 literal. This keeps
+    # bracketed garbage like [not::ip] or IPvFuture forms from slipping through
+    # as "valid" hosts and failing later in less controlled places.
     if ":" in host:
+        try:
+            ipaddress.IPv6Address(host)
+        except ValueError:
+            return False
         return True
     if _IPV4_RE.match(host):
+        try:
+            ipaddress.IPv4Address(host)
+        except ValueError:
+            return False
         return True
+    # Reject IPv4-like numeric shorthands / legacy forms (e.g. 127.1,
+    # 010.000.000.001) rather than treating them as DNS hostnames. Different
+    # resolvers normalize these differently, which is especially risky on the
+    # web surface's SSRF boundary.
+    if re.fullmatch(r"(?:\d+\.)+\d+", host):
+        return False
     if _HOSTNAME_RE.match(host):
         return True
     return False
@@ -154,7 +174,7 @@ def _is_disallowed_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool
     )
 
 
-def assert_publicly_routable(url: str) -> None:
+async def assert_publicly_routable(url: str) -> None:
     """Reject URLs whose host is/resolves to a private, loopback, link-local,
     multicast, or reserved address.
 
@@ -166,6 +186,12 @@ def assert_publicly_routable(url: str) -> None:
 
     Returns None on success; raises InvalidURL with a generic message on
     rejection (intentionally vague to avoid fingerprinting internal topology).
+
+    Async because uvicorn runs a single event loop: a synchronous
+    ``socket.getaddrinfo`` here would stall every concurrent scan, the polling
+    endpoint, and the SSRF redirect-hook (which runs once per outbound request
+    × every in-flight scan) for the full DNS lookup. ``loop.getaddrinfo``
+    dispatches to a thread executor so the loop keeps running.
 
     Should be called only from the web layer; the CLI is local and its operator
     may legitimately scan internal hosts.
@@ -197,8 +223,9 @@ def assert_publicly_routable(url: str) -> None:
     if cached and cached[1] > now:
         ips = cached[0]
     else:
+        loop = asyncio.get_running_loop()
         try:
-            infos = socket.getaddrinfo(host, None)
+            infos = await loop.getaddrinfo(host, None)
         except socket.gaierror as e:
             raise InvalidURL(f"Could not resolve hostname: {host!r}.") from e
         ips = tuple({info[4][0] for info in infos})  # dedupe across families

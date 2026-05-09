@@ -205,6 +205,7 @@ class _IncrementalWriter:
         self.log_path = log_path
         self._scanner_order: list[str] = []
         self._partial_results: list = []
+        self._registration = None
         self.last_report: Report | None = None
 
     def __call__(self, event: dict) -> None:
@@ -216,6 +217,14 @@ class _IncrementalWriter:
             if r is not None:
                 self._partial_results.append(r)
                 self._flush()
+        elif et == "registration":
+            # The registration event arrives after every scanner completes
+            # but before 'done'. Capturing it here means an interrupt or
+            # engine failure that lands between this event and 'done' still
+            # leaves a partial report on disk that includes the registration
+            # section.
+            self._registration = event.get("registration")
+            self._flush()
         elif et == "done":
             self._flush()
 
@@ -234,6 +243,7 @@ class _IncrementalWriter:
             results=results,
             recommendations=_prioritize(results),
             config_files=self.cfg_files,
+            registration=self._registration,
         )
         try:
             self.md_path.parent.mkdir(parents=True, exist_ok=True)
@@ -306,7 +316,11 @@ def scan(url: str, config_path: Path | None, out_path: Path | None, quiet: bool,
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
         out_path = Path.cwd() / "reports" / f"urlreporter-{_safe_filename(host)}-{ts}.md"
     html_path = out_path.with_suffix(".html") if html_flag else None
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        click.echo(f"Failed to create report directory: {e}", err=True)
+        sys.exit(1)
 
     progress = None if quiet else _ProgressPrinter(sys.stderr)
     writer = _IncrementalWriter(
@@ -335,12 +349,14 @@ def scan(url: str, config_path: Path | None, out_path: Path | None, quiet: bool,
     if report is None:
         report = writer.last_report
 
+    write_failed = False
     if report is not None:
         try:
             out_path.write_text(render_markdown(report, log_path=str(log_path)), encoding="utf-8")
             if html_path is not None:
                 html_path.write_text(render_html(report, log_path=str(log_path)), encoding="utf-8")
         except OSError as e:
+            write_failed = True
             click.echo(f"Failed to write report: {e}", err=True)
 
     if not quiet and report is not None:
@@ -349,24 +365,31 @@ def scan(url: str, config_path: Path | None, out_path: Path | None, quiet: bool,
         click.echo("")
 
     if interrupted:
-        if report is not None:
+        if report is not None and not write_failed:
             click.echo(f"Scan interrupted. Partial report written to: {out_path}", err=True)
             if html_path is not None:
                 click.echo(f"Partial HTML report written to: {html_path}", err=True)
+        elif report is not None:
+            click.echo("Scan interrupted, but the partial report could not be written.", err=True)
         else:
             click.echo("Scan interrupted before any scanner finished. No report written.", err=True)
         sys.exit(130)
 
     if error_msg is not None:
         click.echo(f"Scan failed: {error_msg}", err=True)
-        if report is not None:
+        if report is not None and not write_failed:
             click.echo(f"Partial report written to: {out_path}", err=True)
             if html_path is not None:
                 click.echo(f"Partial HTML report written to: {html_path}", err=True)
+        elif report is not None:
+            click.echo("A partial report was produced, but it could not be written.", err=True)
         sys.exit(1)
 
     if report is None:
         click.echo("Scan produced no report.", err=True)
+        sys.exit(1)
+
+    if write_failed:
         sys.exit(1)
 
     click.echo(f"Report written to: {out_path}")

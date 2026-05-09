@@ -213,6 +213,176 @@ def _format_timestamp(dt) -> str:
     return f"{dt.day}/{dt.strftime('%b')}/{dt.year} at {dt.strftime('%H:%M')} UTC"
 
 
+def _format_date(dt) -> str:
+    """Format a UTC datetime as e.g. '12/Mar/2026' (no time)."""
+    return f"{dt.day}/{dt.strftime('%b')}/{dt.year}"
+
+
+def _format_age(days: int | None) -> str:
+    """Render a day count as 'N years', 'N months', or 'N days'."""
+    if days is None:
+        return ""
+    if days < 0:
+        days = abs(days)
+    if days >= 365:
+        years = days // 365
+        return f"{years} year" + ("s" if years != 1 else "")
+    if days >= 30:
+        # Cap at 11 so 360-364 days don't render as "12 months"; the very
+        # next day rolls into the years branch as "1 year".
+        months = min(days // 30, 11)
+        return f"{months} month" + ("s" if months != 1 else "")
+    return f"{days} day" + ("s" if days != 1 else "")
+
+
+def _registration_summary_line(reg) -> str:
+    """One-line text summary of registration (for the terminal summary block)."""
+    if reg is None:
+        return ""
+    bits: list[str] = []
+    if reg.registrar:
+        bits.append(f"Registrar: {reg.registrar}")
+    if reg.expires is not None:
+        days = reg.days_until_expiry
+        if days is not None and days < 0:
+            bits.append(f"EXPIRED {_format_age(days)} ago ({_format_date(reg.expires)})")
+        elif days is not None:
+            bits.append(f"Expires {_format_date(reg.expires)} ({_format_age(days)})")
+    if not bits:
+        return ""
+    return "Registration: " + " · ".join(bits)
+
+
+def _render_registration_html(reg) -> list[str]:
+    """Render the Registration card for the HTML report. Empty list when no data."""
+    if reg is None:
+        return []
+    cells: list[tuple[str, str, str]] = []  # (label, value_html, urgency_class)
+    if reg.registrar:
+        if reg.registrar_url:
+            v = (
+                f"<a href='{_esc(reg.registrar_url)}' target='_blank' "
+                f"rel='noopener noreferrer'>{_esc(reg.registrar)}</a>"
+            )
+        else:
+            v = _esc(reg.registrar)
+        cells.append(("Registrar", v, ""))
+    if reg.created is not None:
+        age = _format_age(reg.domain_age_days)
+        sub = f"<span class='reg-sub'>{_esc(age + ' old')}</span>" if age else ""
+        cells.append(("Created", f"{_esc(_format_date(reg.created))}{sub}", ""))
+    if reg.expires is not None:
+        days = reg.days_until_expiry
+        if days is None:
+            sub = ""
+            urg = ""
+        elif days < 0:
+            sub = f"<span class='reg-sub'>expired {_esc(_format_age(days))} ago</span>"
+            urg = "reg-critical"
+        elif days == 0:
+            # Same UTC calendar day — split by actual timestamp.
+            label = "expired today" if reg.is_expired else "expires today"
+            sub = f"<span class='reg-sub'>{label}</span>"
+            urg = "reg-critical"
+        elif days <= 30:
+            sub = f"<span class='reg-sub'>in {_esc(_format_age(days))}</span>"
+            urg = "reg-critical"
+        elif days <= 90:
+            sub = f"<span class='reg-sub'>in {_esc(_format_age(days))}</span>"
+            urg = "reg-warning"
+        else:
+            sub = f"<span class='reg-sub'>in {_esc(_format_age(days))}</span>"
+            urg = ""
+        cells.append(("Expires", f"{_esc(_format_date(reg.expires))}{sub}", urg))
+    if reg.locked is True:
+        cells.append(("Registrar lock", "On <span class='reg-sub'>transfer/delete prohibited</span>", "reg-good"))
+    elif reg.locked is False:
+        cells.append(("Registrar lock", "Off", "reg-warning"))
+    if reg.dnssec is True:
+        cells.append(("DNSSEC", "Signed", "reg-good"))
+    elif reg.dnssec is False:
+        cells.append(("DNSSEC", "Unsigned", ""))
+    if not cells:
+        return []
+    parts: list[str] = []
+    parts.append("<section class='registration-card'>")
+    parts.append("<p class='section-eyebrow'>// registration</p>")
+    parts.append(f"<h2>Domain: <code>{_esc(reg.domain)}</code></h2>")
+    parts.append("<div class='reg-grid'>")
+    for label, value_html, urg in cells:
+        parts.append(f"<div class='reg-cell {urg}'>")
+        parts.append(f"<div class='reg-label'>{_esc(label)}</div>")
+        parts.append(f"<div class='reg-value'>{value_html}</div>")
+        parts.append("</div>")
+    parts.append("</div>")
+    if reg.name_servers:
+        ns = ", ".join(_esc(n) for n in reg.name_servers[:6])
+        if len(reg.name_servers) > 6:
+            ns += f", +{len(reg.name_servers) - 6} more"
+        parts.append(f"<p class='reg-ns'><span class='reg-ns-label'>Name servers:</span> {ns}</p>")
+    parts.append("</section>")
+    return parts
+
+
+def _render_registration_md(reg) -> list[str]:
+    """Render the Registration section for the markdown report. Empty list when no data."""
+    if reg is None:
+        return []
+    rows: list[tuple[str, str]] = []
+    if reg.registrar:
+        if reg.registrar_url:
+            rows.append(("Registrar", f"[{reg.registrar}]({reg.registrar_url})"))
+        else:
+            rows.append(("Registrar", reg.registrar))
+    if reg.created is not None:
+        age = _format_age(reg.domain_age_days)
+        rows.append(("Created", f"{_format_date(reg.created)}" + (f" ({age} old)" if age else "")))
+    if reg.expires is not None:
+        days = reg.days_until_expiry
+        urgency = ""
+        if days is not None:
+            if days < 0:
+                urgency = f" — **EXPIRED {_format_age(days)} ago**"
+            elif days == 0:
+                # Same UTC calendar day — split by actual timestamp.
+                urgency = " — **EXPIRED today**" if reg.is_expired else " — **expires today**"
+            elif days <= 30:
+                urgency = f" — **expires in {_format_age(days)}**"
+            elif days <= 90:
+                urgency = f" — expires in {_format_age(days)}"
+            else:
+                urgency = f" (in {_format_age(days)})"
+        rows.append(("Expires", f"{_format_date(reg.expires)}{urgency}"))
+    if reg.updated is not None:
+        rows.append(("Last changed", _format_date(reg.updated)))
+    if reg.locked is True:
+        rows.append(("Registrar lock", "On (transfer/delete prohibited)"))
+    elif reg.locked is False:
+        rows.append(("Registrar lock", "Off"))
+    if reg.dnssec is True:
+        rows.append(("DNSSEC at registry", "Signed"))
+    elif reg.dnssec is False:
+        rows.append(("DNSSEC at registry", "Unsigned"))
+    if reg.name_servers:
+        ns = ", ".join(reg.name_servers[:4])
+        if len(reg.name_servers) > 4:
+            ns += f", +{len(reg.name_servers) - 4} more"
+        rows.append(("Name servers", ns))
+    if reg.registrant_country:
+        rows.append(("Registrant country", reg.registrant_country))
+    if not rows:
+        return []
+    out: list[str] = []
+    out.append("## Registration")
+    out.append("")
+    out.append(f"_Domain: `{reg.domain}`_")
+    out.append("")
+    for label, value in rows:
+        out.append(f"- **{label}:** {value}")
+    out.append("")
+    return out
+
+
 def _linkify_html(text: str | None) -> str:
     """Escape `text` for HTML and turn URLs into anchor tags."""
     if not text:
@@ -236,6 +406,10 @@ def render_summary(report: Report, log_path: str | None = None) -> str:
     lines.append(f"Security report - {report.url}")
     lines.append(f"Generated {_format_timestamp(report.generated_at)}")
     lines.append("")
+    reg_line = _registration_summary_line(report.registration)
+    if reg_line:
+        lines.append(reg_line)
+        lines.append("")
     if report.overall_score is None:
         lines.append("Overall: no graded scanners returned a score.")
     else:
@@ -282,10 +456,12 @@ def render_markdown(report: Report, log_path: str | None = None) -> str:
     out: list[str] = []
     # Backtick-wrap the URL so markdown renderers don't treat `_`, `*`, `~`,
     # `[` inside the URL as inline formatting in the heading.
-    out.append(f"# Security report - `{report.url}`")
+    out.append(f"# Security report: <small>[`{report.url}`](<{report.url}>)</small>")
     out.append("")
-    out.append(f"_Generated {_format_timestamp(report.generated_at)} by Url Reporter_")
+    out.append(f"_Generated {_format_timestamp(report.generated_at)} by [Url Reporter](https://urlreporter.com/)_")
     out.append("")
+
+    out.extend(_render_registration_md(report.registration))
 
     out.append("## Overall")
     out.append("")
@@ -416,6 +592,12 @@ h1 code {
   letter-spacing: 0.02em;
   margin: 0;
 }
+.generated a {
+  color: inherit;
+  text-decoration: none;
+  transition: color 140ms;
+}
+.generated a:hover { color: var(--accent2); }
 section { margin-bottom: 32px; }
 .section-eyebrow {
   font-family: var(--mono);
@@ -432,6 +614,78 @@ h2 {
   font-size: 20px;
   letter-spacing: -0.01em;
   margin: 0 0 18px;
+}
+
+.registration-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 24px 28px;
+  margin-bottom: 32px;
+}
+.registration-card h2 { margin-bottom: 18px; font-size: 18px; }
+.registration-card h2 code {
+  font-family: var(--mono);
+  font-size: 16px;
+  color: var(--mute);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+.reg-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 14px 22px;
+}
+.reg-cell {
+  border-left: 2px solid var(--border-strong);
+  padding: 4px 0 4px 12px;
+}
+.reg-cell.reg-good { border-left-color: var(--good); }
+.reg-cell.reg-warning { border-left-color: var(--warn); }
+.reg-cell.reg-critical { border-left-color: var(--bad); }
+.reg-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--mute);
+  margin-bottom: 4px;
+}
+.reg-value {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.35;
+}
+.reg-cell.reg-critical .reg-value { color: var(--bad); }
+.reg-cell.reg-warning .reg-value { color: var(--warn); }
+.reg-value a { color: inherit; border-bottom: 1px dotted var(--border-strong); text-decoration: none; }
+.reg-value a:hover { border-bottom-color: var(--accent2); }
+.reg-sub {
+  display: block;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--mute);
+  margin-top: 2px;
+}
+.reg-cell.reg-critical .reg-sub { color: var(--bad); }
+.reg-cell.reg-warning .reg-sub { color: var(--warn); }
+.reg-ns {
+  margin: 16px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--mute);
+  word-break: break-all;
+}
+.reg-ns-label {
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin-right: 6px;
 }
 
 .overall-card {
@@ -662,7 +916,18 @@ footer {
   body::before { display: none; }
   body { background: #ffffff; color: #111; }
   .wrap { max-width: none; padding: 0; }
-  .overall-card, table, .findings details { background: #fff; border-color: #ddd; }
+  .overall-card, table, .findings details, .registration-card { background: #fff; border-color: #ddd; }
+  .reg-cell { border-left-color: #999; }
+  .reg-cell.reg-good { border-left-color: #2a8c5a; }
+  .reg-cell.reg-warning { border-left-color: #b87a16; }
+  .reg-cell.reg-critical { border-left-color: #b8323c; }
+  .reg-cell.reg-warning .reg-value, .reg-cell.reg-warning .reg-sub { color: #b87a16; }
+  .reg-cell.reg-critical .reg-value, .reg-cell.reg-critical .reg-sub { color: #b8323c; }
+  /* No !important: the urgency rules above for .reg-warning .reg-sub /
+     .reg-critical .reg-sub are more specific (0,0,3,0) and should win on
+     warn/critical sub-text in print. With !important they were being
+     forced to plain #555. */
+  .reg-label, .reg-sub, .reg-ns, .reg-ns-label { color: #555; }
   th { background: #fafafa; color: #555; }
   td, .rec, .detail, .footnote, .generated, .aggregate-summary, .grade .score { color: #333; }
   .eyebrow, .section-eyebrow, .grade-unknown { color: #555; }
@@ -699,9 +964,14 @@ def render_html(report: Report, log_path: str | None = None) -> str:
     )
     parts.append(
         f"<p class='generated'>Generated {_esc(_format_timestamp(report.generated_at))} "
-        f"by Url Reporter</p>"
+        f"by <a href='https://urlreporter.com/' target='_blank' rel='noopener noreferrer'>"
+        f"Url Reporter</a></p>"
     )
     parts.append("</header>")
+
+    # Registration card (between hero and overall). Rendered only when RDAP
+    # produced something. Gracefully omitted otherwise — no error, no slot.
+    parts.extend(_render_registration_html(report.registration))
 
     # Overall card
     parts.append("<section><div class='overall-card'>")
@@ -826,7 +1096,9 @@ def render_html(report: Report, log_path: str | None = None) -> str:
     # Footer
     parts.append("<footer>")
     parts.append(
-        "<p class='footnote'>Url Reporter &middot; made by "
+        "<p class='footnote'>"
+        "<a href='https://urlreporter.com/' target='_blank' rel='noopener noreferrer'>Url Reporter</a>"
+        " &middot; built by "
         "<a href='https://pdiomede.com' target='_blank' rel='noopener noreferrer'>Paolo Diomede</a>"
         "</p>"
     )

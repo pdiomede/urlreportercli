@@ -7,6 +7,88 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.0.55] - 2026-05-09
+
+### Changed (SSL Labs slow-poll degrades to link-out instead of red ERROR)
+- **`urlreporter/scanners/ssllabs.py:scan` now returns a link-out result when the polling deadline expires while SSL Labs is still working.** Previously, hitting `SCAN_TIMEOUT_SECONDS` (default 180) while SSL Labs was still in `status: IN_PROGRESS` produced `ok=False, error="Timed out after 180s waiting for SSL Labs."` &mdash; surfacing as a red ERROR row in the per-scanner table, which mis-implied the scanned site had a TLS problem when in fact the third-party assessment was simply slow (1-3 minutes is typical for first-time scans on a cache miss). The deadline branch now returns `ok=True, grade=None, score=None, link=https://www.ssllabs.com/ssltest/analyze.html?d=<host>` with a summary like `"Assessment still running after 180s. First-time SSL Labs scans take 1-3 minutes; cached scans return in seconds. Open the link to watch live progress on ssllabs.com."`. The row drops out of the red ERROR bucket into the same "no public API" link-out bucket InternetNL and the crt.sh double-fail tail use; already excluded from the weighted average via `aggregate_score`'s `score is not None` filter, so the overall grade is unaffected. Click-through goes to the live SSL Labs analyze page where the user can watch the assessment finish naturally.
+
+### Notes
+- **No behavior change on cache hits or normal cache-miss completions.** The vast majority of scans never hit the deadline (cache hit returns in seconds; typical cache miss completes in 90-180s). This release only changes what the user sees on the long tail of slow assessments (>180s).
+- **Other SSL Labs failure modes still surface as red ERROR.** Hard failures &mdash; `status=ERROR` from SSL Labs (real TLS problem on the target), exhausted retries on transient HTTP 5xx, exhausted `httpx.RequestError` retries, missing endpoints / grades in the parsed response &mdash; still return `ok=False` so genuine target-side issues remain visible. Only the "polling timed out, but SSL Labs is still happy and working" path is now graceful.
+- **Consistent with the v0.0.50 crt.sh + CertSpotter pattern.** Same "third-party flake degrades to link-out, never a red ERROR for the target" stance applied to SSL Labs.
+
+## [0.0.54] - 2026-05-09
+
+### Notes
+- **Version-only bump to track the web release.** v0.0.54 ships web-side template / CSS edits only (progress-page notice line break, in-page top nav cleanup, result-page registration-card domain chip recoloring, and a "More about our Scanners" CTA at the foot of the landing page's twelve-scanners section). No engine, scanner, runner, grading, report-renderer, or CLI-flag behavior changed. The version is bumped here purely to keep `pyproject.toml` / `__version__` in sync with the web release. See [CHANGELOG_WEB.md](./CHANGELOG_WEB.md) for the per-file detail.
+
+## [0.0.53] - 2026-05-09
+
+### Fixed (audit pass: validation, cancellation, write errors, and TTL cleanup)
+- **`urlreporter/urlutil.py:normalize_url` now converts malformed bracketed IPv6 into `InvalidURL` instead of leaking raw `ValueError`.** Inputs like `https://[not::ip]/` and `https://[::1` used to escape the normal validation path, which could turn a bad CLI input into an unhandled exception and a bad web form input into a 500. Host validation now requires real IPv6 literals for colon-containing hosts, catches parser `ValueError`s, and rejects IPv4-like numeric shorthand / legacy forms (for example `127.1`, `010.000.000.001`) rather than letting platform resolver normalization decide what they mean.
+- **`urlreporter/runner.py:run_scans` now cancels and drains child tasks when the parent scan is cancelled.** A Ctrl-C, uvicorn shutdown, or self-cancelling scanner could previously leave scanner tasks and the parallel RDAP task running against an `httpx.AsyncClient` that was already closing. The cancellation path now cancels pending scanner tasks plus the registration task, awaits them with `return_exceptions=True`, and then re-raises the original cancellation.
+- **`urlreporter/cli.py:scan` now exits nonzero when report output cannot be written.** The CLI used to catch `OSError`, print `Failed to write report`, but still continue to the success path and print `Report written to:`. Directory creation and final Markdown / HTML writes now fail the command honestly and suppress false success messaging.
+- **`urlreporter/web.py` now enforces in-memory job TTL on read routes, not only when a new scan starts.** `/scan/{job_id}`, `/scan/{job_id}/status`, and `/scan/{job_id}/result` all call `_cleanup_old_jobs()` before lookup, so a stale job no longer remains readable forever if no later scan is submitted.
+- **`urlreporter/web.py:_cleanup_old_reports` now prunes stale `.md`, `.html`, and `.name` files independently.** The previous startup cleanup only iterated `*.md`, so orphaned HTML or filename sidecars could accumulate indefinitely. Cleanup now checks all three report suffixes and leaves unrelated files alone.
+
+### Tests
+- **Added focused regression coverage in `tests/test_audit_fixes.py`.** Tests cover malformed IPv6 validation, child-task cancellation cleanup, CLI write-failure exit behavior, stale job TTL enforcement on the status route, and orphan sidecar report cleanup.
+
+## [0.0.52] - 2026-05-09
+
+### Fixed (web concurrency: SSRF gate no longer blocks the event loop)
+- **`urlreporter/urlutil.py:assert_publicly_routable` is now `async def` and uses `loop.getaddrinfo` instead of `socket.getaddrinfo`.** The function is invoked from two async paths in `web.py` (once up-front in the `POST /scan` handler, and once per outbound HTTP request via the `_ssrf_request_hook` httpx event hook, which fires for every redirect on every scanner). Under uvicorn's single event loop, every blocking DNS lookup paused every other in-flight scan, the `/scan/<id>/status` poll, and the SSRF hook for every other concurrent request. The 30s `_DNS_CACHE` masked it for repeat lookups within a scan, but a typical scan first-touches ~8-10 distinct third-party hostnames (cloudflare-dns.com, hstspreload.org, securityheaders.com, observatory-api.mdn.mozilla.net, crt.sh, api.certspotter.com, …), each triggering a fresh blocking lookup. Switching to `await loop.getaddrinfo(host, None)` dispatches DNS to asyncio's thread executor so the event loop keeps running. Both call sites in `web.py` (`_ssrf_request_hook` and the `/scan` handler) were updated to `await` the call.
+- **Verified the fix is non-blocking under load.** Live test: during a 12.6 ms DNS resolve, a 5 ms-interval heartbeat coroutine ticked 3 times (under the previous synchronous version it would have ticked 0 or 1). All correctness cases preserved (still rejects literal RFC 1918, loopback v4 / v6, link-local incl. 169.254.169.254, multicast, reserved, unspecified, and the cloud-metadata hostname blocklist; still allows public hosts).
+
+### Notes
+- **No public-surface change.** No new route, scanner, config key, or CLI flag; `urlutil.assert_publicly_routable`'s signature changed from `def` to `async def` but is called only from `web.py` (the CLI is intentionally unguarded since operators may legitimately scan internal hosts), and both call sites were updated in the same commit.
+
+## [0.0.51] - 2026-05-09
+
+### Notes
+- **Version-only bump to track the web release.** v0.0.51 ships web-side template updates (new `/contact` page, footer Contact link added across every page, the nav version-pill moved into a `Current build` pill on the About page, copy fixes, link-style cleanup) plus four template-side bug fixes. No engine, scanner, runner, grading, report-renderer, or CLI-flag behavior changed; the version is bumped here purely to keep `pyproject.toml` / `__version__` in sync with the web release. See [CHANGELOG_WEB.md](./CHANGELOG_WEB.md) for the detailed change list.
+
+## [0.0.50] - 2026-05-09
+
+### Added (crt.sh resilience: CertSpotter failover + link-out tail)
+- **`urlreporter/scanners/crtsh.py` rebuilt around a three-tier fallback chain.** crt.sh remains the primary source; on `RetryExhausted` / non-2xx / non-JSON / wrong-shape it falls over to **CertSpotter** (`api.certspotter.com/v1/issuances`), a different operator (SSLmate) covering the same CT data with a generous unauthenticated free tier. If CertSpotter also fails, the scanner degrades to a **link-out result** (`ok=True, score=None, grade=None, link=https://crt.sh/?q=<host>`) instead of returning a red `ERROR` row — same pattern InternetNL uses when no API token is set, so the row drops out of the scanner table's error bucket and is automatically excluded from the weighted average. Provenance is honest: when CertSpotter is the source, the summary appends ``(via CertSpotter — crt.sh unreachable)``.
+- **Internals refactored into composable helpers.** `_fetch_crtsh` and `_fetch_certspotter` each return a normalized cert list (or raise a private `_SourceFailed`) so the existing grading logic in `_grade` operates on the same shape regardless of which source served the data. CertSpotter responses are mapped into crt.sh's field names (`entry_timestamp`, `not_before`, `issuer_name`) at parse time; the grading model is untouched.
+
+### Fixed (CT failover correctness)
+- **CertSpotter now uses `include_subdomains=true` to match crt.sh's substring-search semantics.** crt.sh's `?q=<apex>` is a fuzzy substring match — for an apex query like `pdiomede.com` it returns certs for the apex AND every subdomain (whose SANs contain the apex string). CertSpotter with `include_subdomains=false` returns only certs whose CN/SAN exactly matches the apex, so when the failover fired for an apex scan the grade was computed from a much narrower sample and could land on a different letter than crt.sh would have produced. The two sources need to behave equivalently for the failover to be transparent.
+- **`_grade` no longer takes an unused `host` parameter.** Dead code dropped from the helper signature and call site.
+- **CertSpotter-source summary tightened.** The previous ``(via CertSpotter; crt.sh unreachable: crt.sh: gave up after 4 attempts; last HTTP 502)`` repeated "crt.sh" twice (once from our prefix, once from `retry_request`'s `label="crt.sh"` error message) and stuffed a verbose retry trace into the report's summary cell. Now reads ``(via CertSpotter — crt.sh unreachable)``; the full upstream-error detail still lands in the per-run log.
+
+### Notes
+- **No new dependencies, no new routes, no scoring change.** The link-out result has `score=None` so `aggregate_score` already excludes it from the weighted average — a CT double-outage no longer drags the overall grade down or surfaces as red ERROR.
+- **No SSRF surface added.** Web scans run the CertSpotter fetch through the same `_ssrf_request_hook` as every other outbound call; `api.certspotter.com` resolves to public IPs.
+- **Failover budget.** Worst case (both upstreams down) adds CertSpotter's retry budget (~31s) before falling through to link-out — same total budget as a single scanner under the existing retry policy. Best case (crt.sh works first try) is unchanged.
+
+## [0.0.49] - 2026-05-09
+
+### Added (domain registration card via RDAP)
+- **New `urlreporter/registration.py` module fetches RDAP metadata for the scanned URL's domain.** `runner.run_scans` now kicks off `fetch_registration(url, client)` in parallel with the 12 scanners, awaits it before emitting a new `registration` event, and attaches the result to a new `Report.registration: RegistrationInfo | None` field. The fetcher does an IANA bootstrap (cached process-wide via an `asyncio.Lock`), looks up the TLD's RDAP service, GETs `/domain/{name}` with the existing `retry_request` helper, and parses registrar, creation / expiration / last-changed events, EPP status codes (for registrar-lock detection), DNSSEC at the registry level, name servers, and registrant country. Always-on (no `SCANNER_*` toggle), excluded from the weighted score, never produces Top-recommendation findings — purely informational, never blocks or fails the scan.
+- **All three report renderers carry the new section.** `render_summary` adds a one-line "Registration: Registrar X · Expires …" between the URL line and the Overall section. `render_markdown` adds a `## Registration` section with bullet rows. `render_html` adds a full-width `.registration-card` between the hero and the gauge/table grid, with color-coded expiration urgency: red ≤30 days or expired, orange ≤90, neutral otherwise; green left border on healthy lock/DNSSEC indicators.
+- **CLI `_IncrementalWriter` handles the new `registration` event** so the partial-on-interrupt path (Ctrl-C / engine crash) preserves the registration section in `writer.last_report` even when the scan didn't emit `done`.
+
+### Changed (report polish)
+- **Markdown report heading format updated.** `# Security report - <url>` is now `# Security report: <small>[\`<url>\`](<<url>>)</small>` — colon instead of hyphen, URL rendered smaller via inline HTML and now clickable. Angle-bracket form on the link target so URLs containing parens or other special characters don't break the link.
+- **"by Url Reporter" is now a link to `https://urlreporter.com/`.** Markdown footer (`_Generated … by [Url Reporter](https://urlreporter.com/)_`), HTML report's hero `<p class='generated'>` (inherits the surrounding muted color, no underline, transitions to cyan on hover), and HTML report's footer `<p class='footnote'>` (matches the existing accent-color "Paolo Diomede" link styling).
+- **Footer attribution everywhere now reads "Built by".** `credit_line()` (used in CLI banner via `--version`), HTML report footer, and all six web templates updated from "Made by".
+- **HTML report registration card visual cleanup.** Domain chip in `<h2>` neutralized: `.registration-card h2 code` now uses `var(--mute)` text on a neutral white-tinted background, matching the gray of the per-cell `REGISTRAR` / `CREATED` labels instead of standing out in cyan. `.reg-grid` `minmax(170px, 1fr)` → `minmax(140px, 1fr)` so all five cells share row 1 at the report's 916px content width instead of wrapping DNSSEC to row 2.
+
+### Fixed (registration data integrity + safety)
+- **`_get_bootstrap` no longer poisons its cache on transient failure.** Previously a 503 / non-JSON / network error would set `_bootstrap = {}` permanently; every subsequent scan in the same process returned no registration data even after the network recovered. Now the failure path returns `{}` from local scope without touching the module-level cache, so the next scan retries.
+- **`registrar_url` and `rdap_link` are now scheme-validated at parse time.** A compromised registry RDAP server could deliver e.g. a `javascript:alert(1)` URL for the registrar 'about' link; the HTML escapers (`_esc`, Jinja autoescape, markdown link syntax) handle special characters but do not strip dangerous schemes. New `_safe_http_url` helper accepts only `http://` / `https://` URLs at parse time, applied to both fields.
+- **Print stylesheet's `.reg-sub` rule no longer overrides urgency colors.** The `!important` on `.reg-label, .reg-sub, .reg-ns, .reg-ns-label { color: #555 !important; }` defeated the more-specific `.reg-cell.reg-warning .reg-sub { color: #b87a16; }` (specificity 0,0,3,0). Removed `!important` so the cascade resolves correctly — warn/critical sub-text retains its orange/red coloring when printed.
+- **`_format_age` no longer prints "12 months" for 360-364 days.** Capped `months = min(days // 30, 11)` so the months branch never displays 12; the 365-day boundary already escalates to "1 year".
+- **`_get_bootstrap` validates `data` is a dict.** If IANA's `dns.json` ever returned a non-dict JSON value, `data.get("services", [])` would raise `AttributeError`; now we `isinstance(data, dict)` and return `{}` with a warning log on mismatch.
+
+### Notes
+- **No new dependencies.** RDAP is fetched via the existing `httpx.AsyncClient` and the same `retry_request` helper every scanner uses; bootstrap is parsed with stdlib `json`.
+- **No SSRF surface added.** Web scans run the bootstrap and RDAP fetches through the same `_ssrf_request_hook` as scanners; both targets (`data.iana.org`, registry RDAP servers) are publicly routable, so the hook is a no-op in practice.
+- **Backward compatible.** No public route, config key, scanner registry, or CLI-flag change. Reports without RDAP coverage (unsupported TLD, IP target, RDAP unreachable) gracefully omit the section in every renderer.
+
 ## [0.0.48] - 2026-05-06
 
 ### Notes

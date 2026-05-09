@@ -11,6 +11,7 @@ import httpx
 
 from .config import Config
 from .grading import aggregate_score
+from .registration import RegistrationInfo, fetch_registration
 from .scanners import REGISTRY
 from .scanners._retry import describe_exc
 from .scanners.base import Finding, ScanResult, SEVERITY_ORDER
@@ -29,6 +30,7 @@ class Report:
     recommendations: list[tuple[Finding, str]] = field(default_factory=list)
     config_files: list[str] = field(default_factory=list)
     total_elapsed: float | None = None
+    registration: RegistrationInfo | None = None
 
 
 def _build_scanners(cfg: Config) -> list:
@@ -108,6 +110,7 @@ async def run_scans(
             results=[],
             config_files=[str(p) for p in cfg.source_files],
             total_elapsed=round(time.monotonic() - run_started, 1),
+            registration=None,
         )
 
     # Use cfg.timeout_seconds as the read timeout (capped to a sensible
@@ -123,49 +126,77 @@ async def run_scans(
     event_hooks = {"request": [request_hook]} if request_hook is not None else {}
     results: list[ScanResult] = []
 
+    registration: RegistrationInfo | None = None
     async with httpx.AsyncClient(timeout=timeout, headers=headers, event_hooks=event_hooks) as client:
+        registration_task = asyncio.create_task(fetch_registration(url, client))
         starts: dict[asyncio.Task, tuple[str, float]] = {}
-        for s in scanners:
-            await _emit(on_event, logger=logger, event={"type": "scanner_start", "scanner": s.name})
-            t = asyncio.create_task(_safe_scan(s, url, client, logger))
-            starts[t] = (s.name, time.monotonic())
+        pending: set[asyncio.Task] = set()
+        try:
+            for s in scanners:
+                await _emit(on_event, logger=logger, event={"type": "scanner_start", "scanner": s.name})
+                t = asyncio.create_task(_safe_scan(s, url, client, logger))
+                starts[t] = (s.name, time.monotonic())
+                pending.add(t)
 
-        # Use asyncio.wait(FIRST_COMPLETED) instead of as_completed: the
-        # latter yields wrapper coroutines, not the original Task objects,
-        # so any per-task bookkeeping keyed by task identity (like our
-        # `starts` map) silently breaks.
-        completed = 0
-        pending: set[asyncio.Task] = set(starts.keys())
-        while pending:
-            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-            for task in done:
-                result = task.result()
-                completed += 1
-                results.append(result)
-                elapsed = time.monotonic() - starts[task][1]
-                if not result.ok and logger is not None:
-                    logger.error(
-                        "Scanner '%s' failed on %s: %s",
-                        result.scanner, url, result.error,
-                    )
-                await _emit(on_event, logger=logger, event={
-                    "type": "scanner_done",
-                    "scanner": result.scanner,
-                    "ok": result.ok,
-                    "grade": result.grade,
-                    "score": result.score,
-                    "elapsed": round(elapsed, 1),
-                    "completed": completed,
-                    "total": total,
-                    "error": result.error,
-                    "link": result.link,
-                    "summary": result.summary,
-                    # Pass the full dataclass so listeners can persist partial
-                    # state (e.g. write a partial markdown report after each
-                    # scanner finishes, so a server crash mid-scan still
-                    # yields a downloadable report of what completed).
-                    "result": result,
-                })
+            # Use asyncio.wait(FIRST_COMPLETED) instead of as_completed: the
+            # latter yields wrapper coroutines, not the original Task objects,
+            # so any per-task bookkeeping keyed by task identity (like our
+            # `starts` map) silently breaks.
+            completed = 0
+            while pending:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    result = task.result()
+                    completed += 1
+                    results.append(result)
+                    elapsed = time.monotonic() - starts[task][1]
+                    if not result.ok and logger is not None:
+                        logger.error(
+                            "Scanner '%s' failed on %s: %s",
+                            result.scanner, url, result.error,
+                        )
+                    await _emit(on_event, logger=logger, event={
+                        "type": "scanner_done",
+                        "scanner": result.scanner,
+                        "ok": result.ok,
+                        "grade": result.grade,
+                        "score": result.score,
+                        "elapsed": round(elapsed, 1),
+                        "completed": completed,
+                        "total": total,
+                        "error": result.error,
+                        "link": result.link,
+                        "summary": result.summary,
+                        # Pass the full dataclass so listeners can persist partial
+                        # state (e.g. write a partial markdown report after each
+                        # scanner finishes, so a server crash mid-scan still
+                        # yields a downloadable report of what completed).
+                        "result": result,
+                    })
+
+            # Drain the registration task while the client is still open; it must
+            # never raise — fetch_registration swallows its own errors.
+            try:
+                registration = await registration_task
+            except Exception:  # noqa: BLE001
+                if logger is not None:
+                    logger.exception("Registration fetch raised unexpectedly")
+                registration = None
+        except BaseException:
+            # If the parent scan is cancelled (CLI Ctrl-C, uvicorn shutdown, or
+            # a self-cancelling scanner), don't leave child tasks running against
+            # an AsyncClient that is about to close.
+            to_drain: list[asyncio.Task] = []
+            for task in pending:
+                if not task.done():
+                    task.cancel()
+                    to_drain.append(task)
+            if not registration_task.done():
+                registration_task.cancel()
+                to_drain.append(registration_task)
+            if to_drain:
+                await asyncio.gather(*to_drain, return_exceptions=True)
+            raise
 
     # Re-order results to match the original scanner order so reports stay stable.
     name_order = {s.name: i for i, s in enumerate(scanners)}
@@ -174,6 +205,10 @@ async def run_scans(
     overall_score, overall_grade = aggregate_score(results)
     recommendations = _prioritize(results)
 
+    # Emit the registration payload before 'done' so listeners can persist it
+    # alongside the final scanner state. Fired even when registration is None
+    # so listeners can clear any stale value.
+    await _emit(on_event, logger=logger, event={"type": "registration", "registration": registration})
     await _emit(on_event, logger=logger, event={"type": "done", "total": total})
 
     return Report(
@@ -185,6 +220,7 @@ async def run_scans(
         recommendations=recommendations,
         config_files=[str(p) for p in cfg.source_files],
         total_elapsed=round(time.monotonic() - run_started, 1),
+        registration=registration,
     )
 
 

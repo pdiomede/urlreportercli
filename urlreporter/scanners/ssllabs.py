@@ -90,10 +90,28 @@ class SSLLabsScanner:
                     msg = data.get("statusMessage") or "SSL Labs reported ERROR"
                     return ScanResult(scanner=self.name, ok=False, error=msg, link=link)
                 if asyncio.get_running_loop().time() > deadline:
+                    # SSL Labs is still polling (status IN_PROGRESS / DNS) when
+                    # the deadline expired. The target site is fine — SSL Labs
+                    # would have returned `status=ERROR` if it found a problem.
+                    # We just ran out of time. Degrade to a link-out result
+                    # (ok=True, score=None) so the row drops out of the red
+                    # ERROR bucket and into the same "no public API" bucket
+                    # InternetNL and the crt.sh double-fail use. Already
+                    # excluded from the weighted average via aggregate_score's
+                    # `score is not None` filter; the user clicks the link to
+                    # watch the assessment finish on ssllabs.com directly.
                     return ScanResult(
                         scanner=self.name,
-                        ok=False,
-                        error=f"Timed out after {self.timeout_seconds}s waiting for SSL Labs.",
+                        ok=True,
+                        grade=None,
+                        score=None,
+                        summary=(
+                            f"Assessment still running after {self.timeout_seconds}s. "
+                            "First-time SSL Labs scans take 1-3 minutes; cached "
+                            "scans return in seconds. Open the link to watch live "
+                            "progress on ssllabs.com."
+                        ),
+                        findings=[],
                         link=link,
                     )
                 # Adaptive polling: 3s cadence for the first 4 polls catches
