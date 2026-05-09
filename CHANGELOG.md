@@ -7,6 +7,20 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.0.70] - 2026-05-10
+
+### Notes
+
+- **Web-template-only release.** Fixes a navigation-consistency bug on the live progress page (5 internal-page links now stay in the same tab instead of opening new tabs). See [CHANGELOG_WEB.md](./CHANGELOG_WEB.md) for the per-line detail and the audit findings that surfaced this one issue out of 7 templates / 12 static assets.
+- **No engine, scanner, parser, CLI, or CSS change.**
+
+## [0.0.69] - 2026-05-10
+
+### Notes
+
+- **Web-template-only release.** This release reorders the live web result page so the registration card appears **after** the overall-score / per-scanner-breakdown grid and **before** the Raw text summary block. The standalone HTML report and markdown export are unchanged &mdash; the renderer keeps the registration card at its existing position near the top of the document, which is the right ordering for an archival/printable artifact. See [CHANGELOG_WEB.md](./CHANGELOG_WEB.md) for the template-side detail and the rationale for keeping the two surfaces' orderings different.
+- **No engine, scanner, parser, runtime, CSS, or CLI change.**
+
 ## [0.0.68] - 2026-05-09
 
 ### Changed (registration card row layout: 4 + 3 with vertically-aligned cell bars)
