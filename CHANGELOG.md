@@ -7,6 +7,17 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.0.57] - 2026-05-09
+
+### Added (registration-card cell tooltips for state-sensitive fields)
+- **`urlreporter/report.py:_render_registration_html` now supports an optional explanatory tooltip per cell, wired up to `Registrar lock` and `DNSSEC`.** The cell tuple was extended from `(label, value_html, urgency)` to `(label, value_html, urgency, tooltip)`. When a tooltip string is provided, the label gains an `&#9432;` info trigger that renders the explanation in a popover on hover/focus &mdash; closing the gap between "the colored accent says something is off" and "the user understands what _off_ actually means". Tooltip copy distinguishes all four states: Lock On / Lock Off / DNSSEC Signed / DNSSEC Unsigned, each describing the security meaning of that specific state (transfer-out hijacking risk for Lock Off; missing DS chain-of-trust for DNSSEC Unsigned; etc.). Cells without a tooltip pass `None` and render unchanged &mdash; the 4-tuple shape is opt-in so other cells (Registrar, Created, Expires, Registrant country) can adopt tooltips later in one line each.
+- **Inline `_HTML_CSS` block gained `.reg-info` / `.reg-info-icon` / `.reg-info-tip` rules adapted from the existing `.linkout-info` pattern in `static/style.css`.** `.reg-label` switched to `display: flex; align-items: center; gap: 6px;` so the icon sits inline with the label text. Popover anchored to the icon's left edge (`left: 0`, not centered) so it does not clip past the rightmost grid cell on a wide registration card; `text-transform: none` and `letter-spacing: normal` reset the inherited uppercase tracked styling inside the popover. Trigger is keyboard-focusable (`tabindex='0'`) with `aria-label` carrying the same description &mdash; matches the project's existing `.linkout-info` accessibility pattern (no `role` on the trigger; the icon is a tooltip surface, not an activatable button). Print stylesheet hides `.reg-info` so the icon does not appear as an orphan glyph on paper.
+
+### Notes
+- **No engine, scanner, runner, grading, or CLI-flag behavior changed.** Pure renderer addition; the registration data shape (`RegistrationInfo` in `urlreporter/registration.py`) is unchanged.
+- **Markdown report unchanged.** Markdown has no hover surface; adding parenthetical explanations would clutter every row. Left for a separate decision if ever requested.
+- **Web result page got the matching change.** See [CHANGELOG_WEB.md](./CHANGELOG_WEB.md) for the template + static-CSS detail.
+
 ## [0.0.56] - 2026-05-09
 
 ### Notes

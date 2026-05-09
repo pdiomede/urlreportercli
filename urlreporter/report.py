@@ -257,7 +257,7 @@ def _render_registration_html(reg) -> list[str]:
     """Render the Registration card for the HTML report. Empty list when no data."""
     if reg is None:
         return []
-    cells: list[tuple[str, str, str]] = []  # (label, value_html, urgency_class)
+    cells: list[tuple[str, str, str, str | None]] = []  # (label, value_html, urgency_class, tooltip)
     if reg.registrar:
         if reg.registrar_url:
             v = (
@@ -266,11 +266,11 @@ def _render_registration_html(reg) -> list[str]:
             )
         else:
             v = _esc(reg.registrar)
-        cells.append(("Registrar", v, ""))
+        cells.append(("Registrar", v, "", None))
     if reg.created is not None:
         age = _format_age(reg.domain_age_days)
         sub = f"<span class='reg-sub'>{_esc(age + ' old')}</span>" if age else ""
-        cells.append(("Created", f"{_esc(_format_date(reg.created))}{sub}", ""))
+        cells.append(("Created", f"{_esc(_format_date(reg.created))}{sub}", "", None))
     if reg.expires is not None:
         days = reg.days_until_expiry
         if days is None:
@@ -293,15 +293,41 @@ def _render_registration_html(reg) -> list[str]:
         else:
             sub = f"<span class='reg-sub'>in {_esc(_format_age(days))}</span>"
             urg = ""
-        cells.append(("Expires", f"{_esc(_format_date(reg.expires))}{sub}", urg))
+        cells.append(("Expires", f"{_esc(_format_date(reg.expires))}{sub}", urg, None))
     if reg.locked is True:
-        cells.append(("Registrar lock", "On <span class='reg-sub'>transfer/delete prohibited</span>", "reg-good"))
+        cells.append((
+            "Registrar lock",
+            "On <span class='reg-sub'>transfer/delete prohibited</span>",
+            "reg-good",
+            "Transfer-out is blocked at the registrar (clientTransferProhibited). "
+            "Standard protection against domain hijacking via unauthorized transfer.",
+        ))
     elif reg.locked is False:
-        cells.append(("Registrar lock", "Off", "reg-warning"))
+        cells.append((
+            "Registrar lock",
+            "Off",
+            "reg-warning",
+            "Domain transfers are not blocked. Anyone with access to the registrar "
+            "account could move this domain to another registrar. Best practice: "
+            "enable transfer lock at your registrar.",
+        ))
     if reg.dnssec is True:
-        cells.append(("DNSSEC", "Signed", "reg-good"))
+        cells.append((
+            "DNSSEC",
+            "Signed",
+            "reg-good",
+            "A DS record is published in the parent zone. Resolvers can validate "
+            "the chain of trust and detect tampered DNS responses.",
+        ))
     elif reg.dnssec is False:
-        cells.append(("DNSSEC", "Unsigned", ""))
+        cells.append((
+            "DNSSEC",
+            "Unsigned",
+            "",
+            "No DS record is published in the parent zone, so DNS responses cannot "
+            "be cryptographically validated. Cache-poisoning or MITM attacks on "
+            "resolvers could redirect this domain undetected.",
+        ))
     if not cells:
         return []
     parts: list[str] = []
@@ -309,9 +335,20 @@ def _render_registration_html(reg) -> list[str]:
     parts.append("<p class='section-eyebrow'>// registration</p>")
     parts.append(f"<h2>Domain: <code>{_esc(reg.domain)}</code></h2>")
     parts.append("<div class='reg-grid'>")
-    for label, value_html, urg in cells:
+    for label, value_html, urg, tip in cells:
         parts.append(f"<div class='reg-cell {urg}'>")
-        parts.append(f"<div class='reg-label'>{_esc(label)}</div>")
+        if tip:
+            tip_esc = _esc(tip)
+            info = (
+                f"<span class='reg-info' tabindex='0' "
+                f"aria-label='{tip_esc}'>"
+                f"<span class='reg-info-icon' aria-hidden='true'>&#9432;</span>"
+                f"<span class='reg-info-tip' role='tooltip'>{tip_esc}</span>"
+                f"</span>"
+            )
+        else:
+            info = ""
+        parts.append(f"<div class='reg-label'>{_esc(label)}{info}</div>")
         parts.append(f"<div class='reg-value'>{value_html}</div>")
         parts.append("</div>")
     parts.append("</div>")
@@ -645,6 +682,9 @@ h2 {
 .reg-cell.reg-warning { border-left-color: var(--warn); }
 .reg-cell.reg-critical { border-left-color: var(--bad); }
 .reg-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: 0.14em;
@@ -652,6 +692,48 @@ h2 {
   color: var(--mute);
   margin-bottom: 4px;
 }
+.reg-info {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: default;
+  outline: none;
+}
+.reg-info-icon {
+  color: var(--mute);
+  font-size: 13px;
+  line-height: 1;
+  transition: color 120ms;
+}
+.reg-info:hover .reg-info-icon,
+.reg-info:focus-visible .reg-info-icon { color: var(--text); }
+.reg-info-tip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: max-content;
+  max-width: 280px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-family: var(--sans);
+  font-size: 12.5px;
+  font-weight: 400;
+  line-height: 1.45;
+  text-align: left;
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: normal;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms;
+  z-index: 5;
+  box-shadow: 0 12px 24px -10px rgba(0, 0, 0, 0.6);
+}
+.reg-info:hover .reg-info-tip,
+.reg-info:focus-visible .reg-info-tip { opacity: 1; }
 .reg-value {
   font-size: 15px;
   font-weight: 500;
@@ -928,6 +1010,7 @@ footer {
      warn/critical sub-text in print. With !important they were being
      forced to plain #555. */
   .reg-label, .reg-sub, .reg-ns, .reg-ns-label { color: #555; }
+  .reg-info { display: none; }
   th { background: #fafafa; color: #555; }
   td, .rec, .detail, .footnote, .generated, .aggregate-summary, .grade .score { color: #333; }
   .eyebrow, .section-eyebrow, .grade-unknown { color: #555; }
