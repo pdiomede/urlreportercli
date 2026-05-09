@@ -7,6 +7,173 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.0.68] - 2026-05-09
+
+### Changed (registration card row layout: 4 + 3 with vertically-aligned cell bars)
+
+- **Both renderer and template now place DNSSEC in row 1 instead of row 2,** flipping the v0.0.66 layout from "3 + 4" to "**4 + 3**". Row 1 is now `Registrar, Created, Expires, DNSSEC`; row 2 is now `Registrar lock, Registry lock, Nameservers` (with `Registrant country` joining row 2 as a 4th cell when present).
+- **Both rows now use the same 4-column grid (`grid-template-columns: repeat(4, 1fr)`),** so the vertical left-bar of each `.reg-cell` aligns between row 1 and row 2 along the horizontal axis. Specifically: `REGISTRAR LOCK`'s bar sits directly under `REGISTRAR`'s, `REGISTRY LOCK` under `CREATED`, `NAMESERVERS` under `EXPIRES`. Row 2's 4th column is empty when no registrant country is exposed (the typical case post-GDPR).
+- **`urlreporter/report.py:_render_registration_html` updated:** the `if reg.dnssec is True / elif reg.dnssec is False` branch now appends to `cells_row1` instead of `cells_row2`, placed between the Expires branch and the Registrar lock branch.
+- **`urlreporter/templates/result.html` updated:** the DNSSEC cell block moved from the row-2 grid to the row-1 grid (between Expires and the row-1 closing `</div>`); the row-1 / row-2 `{% if %}` gate conditions updated to match (`reg.dnssec is not none` moved from row 2's gate to row 1's gate).
+- **CSS in both `report.py` (inline `_HTML_CSS`) and `static/style.css`:** `.reg-grid-row1` was `repeat(3, 1fr)` and `.reg-grid-row2` was `repeat(4, 1fr)`; both are now `repeat(4, 1fr)` so the column boundaries are shared and bars align. The `margin-bottom: 14px` on `.reg-grid-row1` is preserved as a separator between the rows.
+
+### Notes
+
+- **No change to `_render_registration_md`.** Markdown is row-based with no grid concept; field order in the markdown export is unchanged (DNSSEC at registry still renders between Registry lock and Name servers).
+- **No change to the CLI `Security:` summary line.** It's a one-line text summary; the row-grid layout doesn't apply there.
+- **Responsive breakpoints unchanged.** At `max-width: 720px` both rows fall back to 2-column; at `max-width: 480px` both rows collapse to single-column. So mobile stacks cleanly.
+- **Web result page got the matching change in lockstep.** See [CHANGELOG_WEB.md](./CHANGELOG_WEB.md) for the template-side detail.
+
+## [0.0.67] - 2026-05-09
+
+### Fixed (web template emitted empty grid rows when one row had no cells)
+
+- **`urlreporter/templates/result.html` row-grid divs are now individually gated on having at least one cell to render**, fixing an asymmetry with `_render_registration_html` introduced in the v0.0.66 two-row refactor. The Python renderer correctly skips an empty row via `if not cells_list: continue`; the Jinja template emitted both `<div class="reg-grid reg-grid-row1">` and `<div class="reg-grid reg-grid-row2">` unconditionally, so a domain whose RDAP only exposed signals from one of the two row-buckets would render an empty grid div with `margin-bottom: 14px` showing as visible empty space at the top of the card.
+- **Audit of the v0.0.66 refactor.** This was the only real bug found. The `reg_has_data` section-level gate, the `{% if %}` / `{% endif %}` pairing inside each row, the responsive media-query breakpoints, and the existing per-cell conditional branches all balance and behave correctly. The "(the cell to the right)" tooltip phrasing on Registrar lock is technically positional and reads slightly differently on mobile, but it's a pre-v0.0.66 wording choice, not a regression.
+
+### Notes
+
+- **Web-template-only fix.** `_render_registration_html` is unchanged. See [CHANGELOG_WEB.md](./CHANGELOG_WEB.md) for the template-side detail.
+- **No engine, scanner, parser, CSS, or runtime behavior change.**
+
+## [0.0.66] - 2026-05-09
+
+### Changed (Registration card laid out as 3 + 4 two-row grid)
+
+- **`urlreporter/report.py:_render_registration_html` and `urlreporter/templates/result.html` now split the registration card cells into two rows.** Row 1 carries the three identity/dates cells (Registrar, Created, Expires); row 2 carries the four security signals (Registrar lock, Registry lock, DNSSEC, Nameservers). Previously a single auto-fit grid (`repeat(auto-fit, minmax(140px, 1fr))`) flowed all cells in one or two visual rows depending on viewport width &mdash; the layout could land on 3+4, 4+3, or 7-in-a-row on wide screens with no semantic correspondence between the row break and the meaning of the cells. The new layout enforces 3 cells in row 1 and 4 cells in row 2 at desktop widths, putting "what the domain *is*" above "how the domain is *protected*".
+- **`_render_registration_html` refactored:** the single `cells: list[...]` is split into `cells_row1` and `cells_row2`. The render loop iterates `((cells_row1, "reg-grid-row1"), (cells_row2, "reg-grid-row2"))` and emits a separate `<div class='reg-grid reg-grid-row1'>` / `<div class='reg-grid reg-grid-row2'>` container per row. Existing per-cell logic (urgency, tooltips, sub-text) is unchanged; the cells just land in different containers now.
+- **CSS in both surfaces** (inline `_HTML_CSS` block in `report.py` and `static/style.css`): `.reg-grid` keeps `display: grid; gap: 14px 22px;` as the base; `.reg-grid-row1` adds `grid-template-columns: repeat(3, 1fr); margin-bottom: 14px;` (the bottom margin separates the two rows visually); `.reg-grid-row2` adds `grid-template-columns: repeat(4, 1fr);`.
+- **Responsive media queries** keep the layout sensible on narrow viewports: at `max-width: 720px` both rows fall back to 2-column; at `max-width: 480px` both rows collapse to single-column. So mobile users see a stack rather than awkward 3-cell or 4-cell rows that would force tiny cells.
+
+### Notes
+
+- **Registrant country (when present) lands in row 2 as a 5th cell.** Most domains have it redacted post-GDPR, so the 5-cell case is rare; when it appears, the row 2 grid wraps the 5th cell to a new line within row 2 (still visually attached to the security row, just slightly taller). This was a deliberate scope decision: forcing it into row 1 would make row 1 inconsistently 3 or 4 cells; giving it its own row 3 felt over-engineered for a rare case.
+- **Standalone HTML report and live web result page changed in lockstep.** Both surfaces emit the same row structure with the same CSS class names; the matching CSS lives in both `report.py` (inline) and `static/style.css` (web). See [CHANGELOG_WEB.md](./CHANGELOG_WEB.md) for the template-side detail.
+- **Markdown export unchanged.** Markdown is one row per field; no grid layout to split.
+- **CLI terminal `Security:` summary line unchanged.** Already a one-line text summary; no card layout involved.
+
+## [0.0.65] - 2026-05-09
+
+### Fixed (HTML report was missing the Registrant country cell)
+
+- **`urlreporter/report.py:_render_registration_html` now appends a `Registrant country` cell after the `Nameservers` cell, matching the existing behavior of both the markdown export (`_render_registration_md`, since v0.0.55) and the live web result page (`templates/result.html`, since v0.0.55).** Found during a sync audit between the renderer and the Jinja template &mdash; the HTML report was the only surface that silently dropped the registrant-country signal when RDAP returned one. Affected domains where RDAP exposes a country (typically `.gov` and a handful of ccTLDs that haven't fully redacted post-GDPR; most commercial domains return `None` and the cell is gated `if reg.registrant_country:` so they're unaffected). The cell is neutral-color (no urgency), no tooltip &mdash; consistent with the web template's existing render.
+
+### Notes
+
+- **Sync audit results.** `_render_registration_html` and `templates/result.html` are now in sync at the logic level (same gate conditions, same urgency colors, same tooltip strings) for all seven cells: Registrar, Created, Expires, Registrar lock, Registry lock, DNSSEC, Nameservers, Registrant country. The CLI's `--html` and `--out` outputs and the live web result page produce equivalent decisions for the same input.
+- **Two minor wording variations remain** (intentional, not synced): the DNSSEC cell value text differs between `Signed`/`Unsigned` (HTML report) and `Signed at registry`/`Unsigned at registry` (web template); the Expires cell sub-text differs between `in 3 months` / `expired 5 days ago` (HTML report) and `3 months from now` / `5 days ago` (web template). These are presentation-layer choices ("layout" per the user's framing), not logic differences. Left untouched in this release.
+- **One markdown-only field remains:** `Last changed` (`reg.updated`) is rendered as a row in the markdown export but not as a cell in either the HTML report or the live result page. Pre-existing design choice from v0.0.55; left as-is.
+
+## [0.0.64] - 2026-05-09
+
+### Fixed (RFC citation in Nameservers tooltip was wrong)
+
+- **`urlreporter/report.py:_render_registration_html` and `urlreporter/templates/result.html` had the Nameservers cell tooltip cite RFC 1035 §6.1.2 as the basis for "you should have at least 2 nameservers".** RFC 1035 §6.1.2 is actually titled "Boot file format" and has nothing to do with nameserver redundancy. The correct reference is **RFC 1912 §2.3 "NS records"**, which explicitly says: *"You should have at least two name servers for every domain, though more is preferred."* Both surfaces' tooltip strings now cite RFC 1912 §2.3 and quote that operative sentence directly so the user can see the actual basis for the recommendation. Affects both the `ns_count == 1` warning tooltip and the `ns_count <= 6` good-state tooltip.
+- **CLI scope:** the standalone HTML report (CLI's `--html` output) carries the same tooltip text via `_render_registration_html`, so this fix lands on both the live web result page and the downloaded report files in the same release. The markdown export (`_render_registration_md`) was not affected — it never cited a specific RFC section, only used the strings "RFC violation; need 2+" and "RFC-compliant" which remain accurate against RFC 1912 §2.3.
+
+### Notes
+
+- **Audit found no other bugs** in the v0.0.63 Nameservers feature. Considered and ruled out: the cell label "Nameservers" vs the footer label "Name servers" (stylistic, not a bug), tooltip identical for counts 2-6 (sub-text differentiates), markdown count-and-list redundancy for ≤4 NSes (informational, not buggy), `§` Unicode in attribute values (renders fine), `reg_has_data` gate already includes `or reg.name_servers` from v0.0.55, and the 0-NS case already gated by the same `if reg.name_servers` check that hides the existing footer.
+
+## [0.0.63] - 2026-05-09
+
+### Added (Nameservers count cell on the registration card)
+
+- **`urlreporter/report.py:_render_registration_html` now emits a new `Nameservers` cell on the registration card, surfacing the count of nameservers and a state-aware urgency color.** The cell sits after `DNSSEC` and before any registrant-country cell, alongside the existing `Name servers:` footer (which keeps showing the actual list of NS hostnames). The new cell is the at-a-glance answer to "how many NSes does this domain have, and is that fine?"; the footer answers "what are they?". State buckets:
+  - **`1`** &mdash; **orange / `reg-warning`**, sub-text `RFC violation (need 2+)`. RFC 1035 §6.1.2 effectively requires two or more nameservers; a single NS is a single point of failure (provider outage = total domain blackout, provider compromise = full DNS hijack of the domain).
+  - **`2`** &mdash; **green / `reg-good`**, sub-text `RFC-compliant`.
+  - **`3` to `6`** &mdash; **green / `reg-good`**, sub-text `healthy count`.
+  - **`7+`** &mdash; **neutral**, sub-text `above typical`. Not a problem; some large operators publish many for global redundancy or anycast diversity.
+- **Each state ships its own info-tooltip** (using the existing `.reg-info` pattern from v0.0.57), explaining the security and availability angle in plain text. The tooltip names the threat model (provider compromise = DNS hijack, same vector v0.0.58's Registry Lock work addresses) so the cell is self-explanatory at a glance.
+- **`urlreporter/report.py:_render_registration_md` enhanced the existing `Name servers` row to include the count and state inline,** e.g. `Name servers: bailey.ns.cloudflare.com, jeff.ns.cloudflare.com (2, RFC-compliant)`. No new row is added &mdash; the markdown export carries the same disambiguation in a single line per the markdown convention used elsewhere on the card.
+
+### Notes
+
+- **No new RDAP fetch logic.** The `RegistrationInfo.name_servers` list has been populated since v0.0.55; this release just adds analysis on top of the data we already have.
+- **CLI terminal `Security:` summary line is unchanged.** The line is already crowded with the lock and DNSSEC signals; nameserver count is non-critical context that belongs in the visual card rather than the one-line summary. Users running `urlreporter scan ... --html` or `--out` see the new cell / row in the report files.
+- **The `0`-count state is unreachable in practice** &mdash; if RDAP returns no nameservers, the existing footer is also skipped, and the new cell is gated on the same `if reg.name_servers` check. No code path emits a "0" cell today; left out of the state table to avoid implying a state that won't render.
+- **Web result page got the matching change.** See [CHANGELOG_WEB.md](./CHANGELOG_WEB.md) for the template-side detail.
+
+## [0.0.62] - 2026-05-09
+
+### Fixed (web result page hid registration card when only registry-lock data was present)
+
+- **`urlreporter/templates/result.html` `reg_has_data` gate now also checks `reg.registry_locked is not none`.** When the v0.0.58 `registry_locked` field was added to `RegistrationInfo`, this gate condition wasn't updated alongside it &mdash; so on an RDAP response carrying only server*Prohibited codes and nothing else (no client* codes, no DNSSEC, no registrar entity, no dates, no name servers, no registrant country), the gate evaluated to false and the **entire registration card was suppressed**, hiding the very signal the user enabled. The fix adds one OR clause to the boolean.
+- **CLI scope:** `--html` and `--out` outputs were not affected. The standalone HTML report (`_render_registration_html`) and markdown export (`_render_registration_md`) gate on whether any cell or row was actually built, so a card with only the Registry lock cell renders correctly. Bug was web-template-only.
+
+### Notes
+
+- **Audit found no other bugs** in the v0.0.58&ndash;v0.0.61 registry-lock work. Considered and ruled out: warning-color cascade onto the new actor sub-text on Off cells (matches the existing Expires-cell precedent), substring-matching on EPP status codes (theoretically over-broad but no real status code triggers a false match), and `_registration_security_line` edge cases (each signal independently null-checked, returns empty when all three are None).
+
+## [0.0.61] - 2026-05-09
+
+### Changed (lock cells now name the actor in always-visible sub-text)
+
+- **`urlreporter/report.py:_render_registration_html` rewrote the value sub-text on all four lock-cell branches to consistently name the actor that controls the lock,** replacing the previous asymmetric copy that was confusing two consecutive users into asking whether `Registrar lock` and `Registry lock` were duplicates. Before this release, `Registrar lock: On` showed `transfer/update/delete prohibited` (described the **actions blocked**), `Registry lock: On` showed `server-level: requires out-of-band auth` (described the **enforcement mechanism**), and both Off states showed nothing &mdash; so the eye couldn't latch onto a parallel signal that distinguished the two cells. New copy uses parallel "via X" framing across all four states: Registrar lock On/Off → `via your registrar account`; Registry lock On/Off → `via the TLD registry (out-of-band auth)`. Always visible, parallel structure, names the actor (which is the actual point of distinction between client* and server* EPP codes).
+- **`urlreporter/report.py:_render_registration_md` got the matching change:** the four lock rows now end with the actor clause in parentheses (`On (via your registrar account)`, `Off (via the TLD registry, out-of-band auth)`, etc.) so the markdown export carries the same disambiguation. Compact since markdown can't show two-line cells gracefully.
+
+### Notes
+
+- **Tooltip aria-labels and popover content are unchanged.** The hover/focus tooltips already explained the distinction in detail; the v0.0.61 sub-text exists for at-a-glance disambiguation by users who don't hover.
+- **Cell labels (`REGISTRAR LOCK`, `REGISTRY LOCK`) are unchanged.** Standard EPP-derived terminology preserved so security-industry users still find what they expect when grepping screenshots / docs / tickets.
+- **Urgency colors unchanged from v0.0.60.** Registrar/Registry On = green, Registrar/Registry Off = orange.
+- **CLI `Security:` summary line unchanged from v0.0.59.** It already names the locks unambiguously on separate words and isn't visually crammed.
+- **Web result page got the matching change.** See [CHANGELOG_WEB.md](./CHANGELOG_WEB.md) for the template-side detail.
+
+## [0.0.60] - 2026-05-09
+
+### Changed (Registry lock: Off now renders as orange warning, not neutral)
+
+- **`urlreporter/report.py:_render_registration_html` now applies the `reg-warning` urgency class to the `Registry lock: Off` cell** (previously empty / neutral). Mirrors the treatment of `Registrar lock: Off`: orange left-bar, orange value text. Url Reporter's audience is professional / high-value sites where missing Registry Lock is a real, actionable security gap, not a neutral fact &mdash; so the absence of the strongest available domain-level protection should be visually flagged the same way absent Registrar lock is. The previous "neutral, like DNSSEC: Unsigned" treatment was calibrated for general-purpose audiences and underweighted the signal for the actual user base.
+- **`Registrar lock: Off` and `Registry lock: Off` now share the orange treatment;** if both are off, both cells flag, making it immediately obvious the domain has neither layer of EPP-status protection.
+
+### Changed (em dashes removed from all tooltip strings)
+
+- **All three new tooltip strings introduced in v0.0.58** (`Registrar lock: On`, `Registry lock: On`, `Registry lock: Off`) **had their em-dash sentence breaks replaced with proper punctuation** (period + new sentence, or semicolon + clause continuation). Em dashes render fine in some fonts but can look like hyphens or render as a misaligned glyph in others, especially at the small font size and tight max-width the tooltip uses; switching to plain ASCII punctuation makes the tooltip robust across all the platform fonts the report and result page might fall back to.
+
+### Notes
+
+- **Both surfaces updated in lockstep.** The standalone HTML report's tooltip CSS class change and the punctuation change land in the same edits the web result page got &mdash; see [CHANGELOG_WEB.md](./CHANGELOG_WEB.md) for the template-side detail. The same string appears verbatim in both surfaces.
+- **No engine, scanner, runner, grading, CLI-flag, or CSS-rule change.** Pure tooltip-copy and one urgency-class swap.
+
+## [0.0.59] - 2026-05-09
+
+### Added (terminal summary now surfaces the security signals on a dedicated second line)
+
+- **`urlreporter/report.py:render_summary` now emits a second line, `Security: …`, immediately under the existing `Registration: …` line.** The new line consolidates the three lock/DNSSEC signals that v0.0.58 surfaced in the HTML/markdown reports but that the terminal summary had no place for &mdash; before this release the terminal output told the user the registrar and the expiry date but said nothing about whether the domain had any of the registrar lock / registry lock / DNSSEC protections set, which made the CLI output materially less informative than the report files written by the same scan. Each signal renders as `<Name> <State>` (e.g. `Registrar lock On`, `Registry lock Off`, `DNSSEC Signed`) joined by the same `·` separator the existing line uses, so the look is consistent with the rest of the summary block.
+- **New helper `_registration_security_line(reg)` in `report.py`** parallels the existing `_registration_summary_line(reg)`. Returns an empty string when **none** of the three signals are determinate (e.g. some ccTLD RDAP responses don't include status codes), so the line is omitted entirely on those domains rather than printing a bare `Security:`.
+- **`render_summary` now skips the trailing blank-line separator only if both the registration line and the security line are empty.** Previously the blank line was tied to just the registration line, so a domain with security signals but no registrar/expiry data would have printed without a separator before the `Overall:` block; the new logic groups both lines as one section.
+
+### Notes
+
+- **No behavior change for the HTML/markdown reports** &mdash; this release only affects the text rendered by `render_summary`. The report files written by `--out` and `--html` got the same Registry lock signal in v0.0.58 via the renderer changes there.
+- **`render_summary` output is also stored on the web side** (per `web.py:381`, `job["summary"]` keeps the same string), so anywhere the web ever surfaces it (e.g. a future API or a logged copy) gets the same second line for free.
+- **Example** &mdash; before:
+  ```
+  Registration: Registrar: HOSTINGER operations, UAB · Expires 21/Jun/2028 (2 years)
+  ```
+  after:
+  ```
+  Registration: Registrar: HOSTINGER operations, UAB · Expires 21/Jun/2028 (2 years)
+  Security: Registrar lock On · Registry lock Off · DNSSEC Signed
+  ```
+
+## [0.0.58] - 2026-05-09
+
+### Added (Registry-lock detection separated from Registrar-lock detection)
+
+- **`urlreporter/registration.py:RegistrationInfo` gained a `registry_locked: bool | None` field, and `_parse_rdap` now derives Registrar lock and Registry lock as two independent flags from the EPP status codes returned by RDAP.** Previously the single `info.locked` flag was set by a substring match on `"transfer prohibited"` or `"delete prohibited"`, which collapsed `client*Prohibited` (registrar-level, owner-set, defeats casual transfers but liftable by anyone with registrar-account access) and `server*Prohibited` (registry-level, lifted only via out-of-band auth at the registry — defeats the registrar-account-compromise DNS-hijack vector behind incidents like Cow Protocol and Curve Finance frontends) into one boolean. The new derivation looks for the canonical `clienttransferprohibited` / `clientupdateprohibited` / `clientdeleteprohibited` tokens for `info.locked`, and `servertransferprohibited` / `serverupdateprohibited` / `serverdeleteprohibited` for `info.registry_locked` &mdash; correctly distinguishing the two protections so a domain with full defense-in-depth (both client* and server* codes set, e.g. paypal.com, google.com) renders as two greens, while a domain with registrar lock only (e.g. example.com) shows registrar green + registry neutral.
+- **Detection handles both RDAP status forms.** RDAP responses arrive in either the EPP camelCase form (`"clientTransferProhibited"`) or the RFC 8056 space-separated form (`"client transfer prohibited"`); the parser canonicalizes by stripping all whitespace and lowercasing before substring-matching, so both forms reduce to the same comparison key. Caught during verification when paypal.com / google.com initially showed `locked=False` despite obviously being locked &mdash; their RDAP server returns the space-separated form, which a naive camelCase substring check missed.
+- **`urlreporter/report.py:_render_registration_html` now emits a separate `Registry lock` cell** (mirroring the existing DNSSEC branch shape) immediately after the `Registrar lock` cell. Both states (On / Off) carry their own tooltip explaining the security model and the threat each control defends against. The existing `Registrar lock` tooltip copy was updated to reference Registry lock as the stronger escalation path. **Deliberate UX choice: `Registry lock: Off` renders neutral (no urgency color), not orange** &mdash; Registry Lock is opt-in / often-paid and rare on consumer domains, so warning-coloring it on every domain would be alarmist and unactionable. Mirrors how `DNSSEC: Unsigned` is already shown neutral.
+- **`urlreporter/report.py:_render_registration_md` got the matching new row** &mdash; `Registry lock: On (server-level: requires out-of-band auth)` / `Registry lock: Off (no registry-level protection)` &mdash; so the markdown export carries the same signal as the HTML report.
+
+### Notes
+
+- **Small correctness regression for domains with only server* codes set (no client* codes).** Before this release such domains showed `Registrar lock: On` because the substring match was broad; they will now correctly show `Registrar lock: Off, Registry lock: On`. The old label was technically incorrect (the registrar control wasn't actually set); the new pair of labels is accurate. This combination is rare in practice.
+- **Tooltip copy stays intentionally generic about real-world incidents** &mdash; describes the threat model (registrar-account compromise → nameserver swap) without naming specific orgs in the user-visible string. Keeps the copy durable as past incidents fade from awareness.
+- **No new HTTP calls, no new RDAP fetch logic, no schema changes.** Registry-lock detection reuses `RegistrationInfo.status_codes` (already populated raw from the RDAP response since v0.0.55).
+- **Web result page got the matching change.** See [CHANGELOG_WEB.md](./CHANGELOG_WEB.md) for the template-side detail.
+
 ## [0.0.57] - 2026-05-09
 
 ### Added (registration-card cell tooltips for state-sensitive fields)

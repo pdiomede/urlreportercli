@@ -253,11 +253,40 @@ def _registration_summary_line(reg) -> str:
     return "Registration: " + " · ".join(bits)
 
 
+def _registration_security_line(reg) -> str:
+    """One-line text summary of registration security signals (for the terminal summary block).
+
+    Surfaces Registrar lock, Registry lock, and DNSSEC. Returns an empty string when no
+    signal is determinate (e.g. some ccTLDs return no RDAP status codes), so the caller
+    can skip the line entirely instead of printing 'Security: ' on its own.
+    """
+    if reg is None:
+        return ""
+    bits: list[str] = []
+    if reg.locked is True:
+        bits.append("Registrar lock On")
+    elif reg.locked is False:
+        bits.append("Registrar lock Off")
+    if reg.registry_locked is True:
+        bits.append("Registry lock On")
+    elif reg.registry_locked is False:
+        bits.append("Registry lock Off")
+    if reg.dnssec is True:
+        bits.append("DNSSEC Signed")
+    elif reg.dnssec is False:
+        bits.append("DNSSEC Unsigned")
+    if not bits:
+        return ""
+    return "Security: " + " · ".join(bits)
+
+
 def _render_registration_html(reg) -> list[str]:
     """Render the Registration card for the HTML report. Empty list when no data."""
     if reg is None:
         return []
-    cells: list[tuple[str, str, str, str | None]] = []  # (label, value_html, urgency_class, tooltip)
+    # Two-row layout: row 1 = identity/dates, row 2 = security signals.
+    cells_row1: list[tuple[str, str, str, str | None]] = []  # (label, value_html, urgency, tooltip)
+    cells_row2: list[tuple[str, str, str, str | None]] = []
     if reg.registrar:
         if reg.registrar_url:
             v = (
@@ -266,11 +295,11 @@ def _render_registration_html(reg) -> list[str]:
             )
         else:
             v = _esc(reg.registrar)
-        cells.append(("Registrar", v, "", None))
+        cells_row1.append(("Registrar", v, "", None))
     if reg.created is not None:
         age = _format_age(reg.domain_age_days)
         sub = f"<span class='reg-sub'>{_esc(age + ' old')}</span>" if age else ""
-        cells.append(("Created", f"{_esc(_format_date(reg.created))}{sub}", "", None))
+        cells_row1.append(("Created", f"{_esc(_format_date(reg.created))}{sub}", "", None))
     if reg.expires is not None:
         days = reg.days_until_expiry
         if days is None:
@@ -293,26 +322,9 @@ def _render_registration_html(reg) -> list[str]:
         else:
             sub = f"<span class='reg-sub'>in {_esc(_format_age(days))}</span>"
             urg = ""
-        cells.append(("Expires", f"{_esc(_format_date(reg.expires))}{sub}", urg, None))
-    if reg.locked is True:
-        cells.append((
-            "Registrar lock",
-            "On <span class='reg-sub'>transfer/delete prohibited</span>",
-            "reg-good",
-            "Transfer-out is blocked at the registrar (clientTransferProhibited). "
-            "Standard protection against domain hijacking via unauthorized transfer.",
-        ))
-    elif reg.locked is False:
-        cells.append((
-            "Registrar lock",
-            "Off",
-            "reg-warning",
-            "Domain transfers are not blocked. Anyone with access to the registrar "
-            "account could move this domain to another registrar. Best practice: "
-            "enable transfer lock at your registrar.",
-        ))
+        cells_row1.append(("Expires", f"{_esc(_format_date(reg.expires))}{sub}", urg, None))
     if reg.dnssec is True:
-        cells.append((
+        cells_row1.append((
             "DNSSEC",
             "Signed",
             "reg-good",
@@ -320,7 +332,7 @@ def _render_registration_html(reg) -> list[str]:
             "the chain of trust and detect tampered DNS responses.",
         ))
     elif reg.dnssec is False:
-        cells.append((
+        cells_row1.append((
             "DNSSEC",
             "Unsigned",
             "",
@@ -328,30 +340,108 @@ def _render_registration_html(reg) -> list[str]:
             "be cryptographically validated. Cache-poisoning or MITM attacks on "
             "resolvers could redirect this domain undetected.",
         ))
-    if not cells:
+    if reg.locked is True:
+        cells_row2.append((
+            "Registrar lock",
+            "On <span class='reg-sub'>via your registrar account</span>",
+            "reg-good",
+            "Transfer, update, and delete are blocked at the registrar (client*Prohibited). "
+            "Standard protection against casual transfer or modification. A determined "
+            "attacker who compromises the registrar account can disable this. For stronger "
+            "protection, see Registry lock (the cell to the right).",
+        ))
+    elif reg.locked is False:
+        cells_row2.append((
+            "Registrar lock",
+            "Off <span class='reg-sub'>via your registrar account</span>",
+            "reg-warning",
+            "Domain transfers and changes are not blocked at the registrar. Anyone with "
+            "registrar-account access could move this domain or modify nameservers. Best "
+            "practice: enable transfer lock at your registrar; for high-value domains also "
+            "ask about Registry lock (registry-level protection with out-of-band auth).",
+        ))
+    if reg.registry_locked is True:
+        cells_row2.append((
+            "Registry lock",
+            "On <span class='reg-sub'>via the TLD registry (out-of-band auth)</span>",
+            "reg-good",
+            "Registry-level lock is active (serverUpdateProhibited and/or related codes). "
+            "Changes to nameservers, contacts, or DNSSEC require out-of-band verification at "
+            "the registry; even a compromised registrar account cannot lift it. The strongest "
+            "available domain-level protection against DNS-hijack and unauthorized-transfer attacks.",
+        ))
+    elif reg.registry_locked is False:
+        cells_row2.append((
+            "Registry lock",
+            "Off <span class='reg-sub'>via the TLD registry (out-of-band auth)</span>",
+            "reg-warning",
+            "No registry-level lock is set. Without serverUpdateProhibited, a compromised "
+            "registrar account can swap nameservers and redirect this domain. This is the attack "
+            "vector behind several real-world DNS-hijack incidents on high-value sites. For "
+            "high-value domains, ask your registrar about Registry Lock; it adds out-of-band "
+            "verification at the registry layer (most TLD registries offer it, often as a paid add-on).",
+        ))
+    if reg.name_servers:
+        ns_count = len(reg.name_servers)
+        if ns_count == 1:
+            ns_urg = "reg-warning"
+            ns_sub = "RFC violation (need 2+)"
+            ns_tip = (
+                "Single nameserver violates RFC 1912 §2.3, which says \"you should "
+                "have at least two name servers for every domain\". If this NS goes "
+                "down or its provider is compromised, the entire domain becomes "
+                "unreachable or hijackable. Add at least one secondary nameserver."
+            )
+        elif ns_count <= 6:
+            ns_urg = "reg-good"
+            ns_sub = "RFC-compliant" if ns_count == 2 else "healthy count"
+            ns_tip = (
+                "Two or more nameservers, the RFC 1912 §2.3 recommended minimum. "
+                "Healthy configuration for typical production domains. Consider 3+ "
+                "across multiple providers if availability is critical."
+            )
+        else:
+            ns_urg = ""
+            ns_sub = "above typical"
+            ns_tip = (
+                "More than the typical 2-4 nameservers. Not a problem; some large "
+                "operators publish many for global redundancy or anycast diversity."
+            )
+        cells_row2.append((
+            "Nameservers",
+            f"{ns_count} <span class='reg-sub'>{ns_sub}</span>",
+            ns_urg,
+            ns_tip,
+        ))
+    if reg.registrant_country:
+        cells_row2.append(("Registrant country", _esc(reg.registrant_country), "", None))
+    if not (cells_row1 or cells_row2):
         return []
     parts: list[str] = []
     parts.append("<section class='registration-card'>")
     parts.append("<p class='section-eyebrow'>// registration</p>")
     parts.append(f"<h2>Domain: <code>{_esc(reg.domain)}</code></h2>")
-    parts.append("<div class='reg-grid'>")
-    for label, value_html, urg, tip in cells:
-        parts.append(f"<div class='reg-cell {urg}'>")
-        if tip:
-            tip_esc = _esc(tip)
-            info = (
-                f"<span class='reg-info' tabindex='0' "
-                f"aria-label='{tip_esc}'>"
-                f"<span class='reg-info-icon' aria-hidden='true'>&#9432;</span>"
-                f"<span class='reg-info-tip' role='tooltip'>{tip_esc}</span>"
-                f"</span>"
-            )
-        else:
-            info = ""
-        parts.append(f"<div class='reg-label'>{_esc(label)}{info}</div>")
-        parts.append(f"<div class='reg-value'>{value_html}</div>")
+    for cells_list, row_class in ((cells_row1, "reg-grid-row1"), (cells_row2, "reg-grid-row2")):
+        if not cells_list:
+            continue
+        parts.append(f"<div class='reg-grid {row_class}'>")
+        for label, value_html, urg, tip in cells_list:
+            parts.append(f"<div class='reg-cell {urg}'>")
+            if tip:
+                tip_esc = _esc(tip)
+                info = (
+                    f"<span class='reg-info' tabindex='0' "
+                    f"aria-label='{tip_esc}'>"
+                    f"<span class='reg-info-icon' aria-hidden='true'>&#9432;</span>"
+                    f"<span class='reg-info-tip' role='tooltip'>{tip_esc}</span>"
+                    f"</span>"
+                )
+            else:
+                info = ""
+            parts.append(f"<div class='reg-label'>{_esc(label)}{info}</div>")
+            parts.append(f"<div class='reg-value'>{value_html}</div>")
+            parts.append("</div>")
         parts.append("</div>")
-    parts.append("</div>")
     if reg.name_servers:
         ns = ", ".join(_esc(n) for n in reg.name_servers[:6])
         if len(reg.name_servers) > 6:
@@ -393,18 +483,29 @@ def _render_registration_md(reg) -> list[str]:
     if reg.updated is not None:
         rows.append(("Last changed", _format_date(reg.updated)))
     if reg.locked is True:
-        rows.append(("Registrar lock", "On (transfer/delete prohibited)"))
+        rows.append(("Registrar lock", "On (via your registrar account)"))
     elif reg.locked is False:
-        rows.append(("Registrar lock", "Off"))
+        rows.append(("Registrar lock", "Off (via your registrar account)"))
+    if reg.registry_locked is True:
+        rows.append(("Registry lock", "On (via the TLD registry, out-of-band auth)"))
+    elif reg.registry_locked is False:
+        rows.append(("Registry lock", "Off (via the TLD registry, out-of-band auth)"))
     if reg.dnssec is True:
         rows.append(("DNSSEC at registry", "Signed"))
     elif reg.dnssec is False:
         rows.append(("DNSSEC at registry", "Unsigned"))
     if reg.name_servers:
+        ns_count = len(reg.name_servers)
         ns = ", ".join(reg.name_servers[:4])
-        if len(reg.name_servers) > 4:
-            ns += f", +{len(reg.name_servers) - 4} more"
-        rows.append(("Name servers", ns))
+        if ns_count > 4:
+            ns += f", +{ns_count - 4} more"
+        if ns_count == 1:
+            ns_state = "RFC violation; need 2+"
+        elif ns_count <= 6:
+            ns_state = "RFC-compliant" if ns_count == 2 else "healthy count"
+        else:
+            ns_state = "above typical"
+        rows.append(("Name servers", f"{ns} ({ns_count}, {ns_state})"))
     if reg.registrant_country:
         rows.append(("Registrant country", reg.registrant_country))
     if not rows:
@@ -444,8 +545,12 @@ def render_summary(report: Report, log_path: str | None = None) -> str:
     lines.append(f"Generated {_format_timestamp(report.generated_at)}")
     lines.append("")
     reg_line = _registration_summary_line(report.registration)
+    sec_line = _registration_security_line(report.registration)
     if reg_line:
         lines.append(reg_line)
+    if sec_line:
+        lines.append(sec_line)
+    if reg_line or sec_line:
         lines.append("")
     if report.overall_score is None:
         lines.append("Overall: no graded scanners returned a score.")
@@ -671,8 +776,19 @@ h2 {
 }
 .reg-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 14px 22px;
+}
+.reg-grid-row1, .reg-grid-row2 {
+  grid-template-columns: repeat(4, 1fr);
+}
+.reg-grid-row1 {
+  margin-bottom: 14px;
+}
+@media (max-width: 720px) {
+  .reg-grid-row1, .reg-grid-row2 { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 480px) {
+  .reg-grid-row1, .reg-grid-row2 { grid-template-columns: 1fr; }
 }
 .reg-cell {
   border-left: 2px solid var(--border-strong);

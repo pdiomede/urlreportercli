@@ -1,4 +1,4 @@
-__version__ = "0.0.57"
+__version__ = "0.0.68"
 
 APP_NAME = "Url Reporter"
 AUTHOR_NAME = "Paolo Diomede"
