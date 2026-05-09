@@ -7,6 +7,11 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.0.56] - 2026-05-09
+
+### Notes
+- **Version-only bump to track the web release.** v0.0.56 ships a small `urlreporter/web.py` cleanup &mdash; an unreachable scanner-picker code path was kept warm after the homepage form lost its checkboxes, and this release commits to the "web is opinionated; CLI is flexible" stance by removing the dead branch. No engine, scanner, runner, grading, report-renderer, or CLI-flag behavior changed; the version is bumped here purely to keep `pyproject.toml` / `__version__` in sync with the web release. See [CHANGELOG_WEB.md](./CHANGELOG_WEB.md) for the per-line detail.
+
 ## [0.0.55] - 2026-05-09
 
 ### Changed (SSL Labs slow-poll degrades to link-out instead of red ERROR)
