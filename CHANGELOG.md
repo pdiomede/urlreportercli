@@ -7,6 +7,20 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.0.71] - 2026-05-10
+
+### Changed (registration card row layout: DNSSEC moved back to row 2; "Registration" raw-summary header now stands alone)
+
+- **`urlreporter/report.py:_render_registration_html` moves the DNSSEC cell from `cells_row1` back to `cells_row2`**, and places it as the **first** cell of row 2 (before Registrar lock). Row 1 now reads `Registrar / Created / Expires` (3 cells, with the 4th column intentionally empty); row 2 now reads `DNSSEC / Registrar lock / Registry lock / Nameservers` (with optional `Registrant country` joining as a 5th cell that wraps to a new line within row 2 on domains where it's exposed). Reverses the v0.0.68 placement.
+- **`urlreporter/report.py:_registration_summary_line` now returns `"Registration\n" + …`** instead of `"Registration: " + …`. The raw-text summary block (used both by CLI stdout and by the web result page's `<details>` "Raw text summary" panel) now reads as a three-line group: a standalone `Registration` header, the registrar/expires bits below it, and the existing `Security: …` line below that. Same data, different vertical rhythm — the leading colon was doing the work of both labelling and starting the field list, which read awkwardly when the field list itself contained colons.
+
+### Notes
+
+- **Both rows still use `grid-template-columns: repeat(4, 1fr)`** in the inline `_HTML_CSS` (and in `static/style.css` for the web surface), so the vertical left-bar of every `.reg-cell` lines up between row 1 and row 2 even though row 1 only fills 3 of 4 columns. `DNSSEC` now sits directly under `REGISTRAR`, `REGISTRAR LOCK` under `CREATED`, `REGISTRY LOCK` under `EXPIRES`, `NAMESERVERS` under the empty 4th slot.
+- **No change to `_render_registration_md`.** Markdown is row-based with no grid concept; field order in the markdown export is unchanged.
+- **Web result page got the matching changes in lockstep.** See [CHANGELOG_WEB.md](./CHANGELOG_WEB.md) for the template-side row reshuffle plus a small `.site-header` padding tweak that tightens the gap below the "scan another URL" pill on the result page.
+- **No engine, scanner, route, or runtime change.**
+
 ## [0.0.70] - 2026-05-10
 
 ### Notes

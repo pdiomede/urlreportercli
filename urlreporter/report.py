@@ -250,7 +250,7 @@ def _registration_summary_line(reg) -> str:
             bits.append(f"Expires {_format_date(reg.expires)} ({_format_age(days)})")
     if not bits:
         return ""
-    return "Registration: " + " · ".join(bits)
+    return "Registration\n" + " · ".join(bits)
 
 
 def _registration_security_line(reg) -> str:
@@ -324,7 +324,7 @@ def _render_registration_html(reg) -> list[str]:
             urg = ""
         cells_row1.append(("Expires", f"{_esc(_format_date(reg.expires))}{sub}", urg, None))
     if reg.dnssec is True:
-        cells_row1.append((
+        cells_row2.append((
             "DNSSEC",
             "Signed",
             "reg-good",
@@ -332,7 +332,7 @@ def _render_registration_html(reg) -> list[str]:
             "the chain of trust and detect tampered DNS responses.",
         ))
     elif reg.dnssec is False:
-        cells_row1.append((
+        cells_row2.append((
             "DNSSEC",
             "Unsigned",
             "",
