@@ -5,7 +5,54 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.1] - 2026-05-10
+
+### Changed (registry-lock cell now wraps "(out-of-band auth)" to a new line)
+
+- **`urlreporter/report.py:_render_registration_html` updated:** the Registry Lock cell value (rendered for both On and Off states in `cells_row2`) now uses `via the TLD registry<br>(out-of-band auth)` so the parenthetical clarifier sits below the main "via the TLD registry" text instead of inline. Pure visual layout — no data shape change. The web result page got the matching change in lockstep; see [CHANGELOG_WEB.md](./CHANGELOG_WEB.md).
+
+### Added (full automated test suite + CI gating)
+
+- **46 new automated tests** under `tests/`, bringing the total from 5 to **51**. All pass in ~0.4s; no real network calls — every scanner test mocks via `respx`.
+  - `tests/test_grading.py` (5 tests) — `aggregate_score` empty/link-out/failed-scanner exclusion, weighted-mean math (the documented "weight-2 SSL Labs at 50 + weight-1 CAA at 100 → 67" case), and the full `score_to_letter` bucket-boundary table from `100→A+` down to `0→F`.
+  - `tests/test_retry.py` (5 tests) — 2xx fast path, 503-retry-then-200, exhaustion → `RetryExhausted` with status_code populated, 404 default behavior, 404 with `treat_404_as_transient=True`.
+  - `tests/test_urlutil.py` (6 tests) — scheme prepend, javascript-scheme rejection, embedded-credentials rejection, internal control-char rejection, SSRF gate vs literal `127.0.0.1`, SSRF gate vs `metadata.google.internal` hostname.
+  - `tests/test_scanners/` (23 tests across 12 files) — every scanner now has at least one mocked-upstream test. Coverage: DNSSEC AD-flag/SERVFAIL/NXDOMAIN, SSL Labs worst-of-endpoints + deadline link-out, Mozilla Observatory negative-score clamp, Email auth apex-walk + subdomain link-out, Security Headers X-Grade + local-synth fallback, HTTPS redirect clean chain + ECONNREFUSED-as-HTTPS-only, CAA walk-up + no-records, DoS posture cf-ray header, HSTS Preload status branches (parametrized), security.txt canonical/legacy, crt.sh→CertSpotter failover + both-down link-out, internet.nl no-token link-out.
+  - `tests/test_report.py` (3 tests) — `render_summary` Overall-line format, markdown-vs-HTML score parity (pins the v0.0.35 cross-renderer drift class), `explain_error` short-circuit on `ok=True` results.
+  - `tests/test_web.py` (4 tests) — `POST /scan` cross-origin → 403, capacity → 503 with `Retry-After: 60`, `GET /scan/<id>/status` 404 for unknown job, `GET /report/<id>.md` 404 for missing file.
+- **GitHub Actions workflow** at `.github/workflows/test.yml` runs the full suite on every push to `main` and on every PR. Uses Python 3.11 + `pip install -e ".[dev]"` + `pytest tests/ -v`. CI gate is fast and reliable.
+- **Test plan** documented at `TEST_PLAN.md` — describes tier scoping (P0/P1/P2), per-test assertions, and what's deliberately out of scope (live integration, browser E2E, log message strings, CSS layout).
+
+### Notes
+
+- **Zero production-code changes** between v1.0.0 and v1.0.1 except the one-line `<br>` insertion in `_render_registration_html`. All scanners, retry, grading, runner, web routes, config loading, registration parser, and URL normalization are byte-identical to v1.0.0.
+- **Two test patterns worth recording** for future scanner additions:
+  1. `email_auth` uses a `side_effect=` handler on a single `respx.get(DOH_URL)` route to branch on `?type=` and `?name=` params. Cleaner than 26 individual mocks (the scanner makes 26 DoH calls per scan: SPF×2 parents + MX×2 + DMARC×2 + DKIM×(2 targets × 10 selectors)).
+  2. `crt.sh` failover and `https_redirect` ECONNREFUSED tests use `monkeypatch.setattr("urlreporter.scanners._retry.DEFAULT_BACKOFFS", (0.0, 0.0, 0.0))` so retry exhaustion is instant — without this, those tests would each take ~31s of real wallclock waiting in `asyncio.sleep`.
+
+## [1.0.0] - 2026-05-10
+
+### Notes (milestone release: graduating from 0.x to first stable)
+
+- **Stability badge, not a code change.** No engine, scanner, parser, CLI, web, template, CSS, or test change between v0.0.72 and v1.0.0 — the version string itself plus a milestone callout in both READMEs is the entire diff. Reasoning: the codebase has stabilized enough that a `0.x` prefix is no longer accurate, and shipping under the "still-experimental" `0.0.x` line was no longer matching the project's actual maturity.
+- **What stabilized us, in numbers** (May 2 → May 10, 2026):
+  - **71 versions shipped** across CHANGELOG.md, all on the `0.0.x` line (v0.0.1 through v0.0.72; v0.0.46 was skipped). Roughly one release every 2.5 hours of active development on average.
+  - **25 of those were bug-fix releases** (versions with at least one `### Fixed` section, by Keep-a-Changelog convention). Headlines verbatim from each version's `### Fixed` header: v0.0.72 (IANA RDAP bootstrap silently disabled forever after one parse-but-empty response), v0.0.67 (web template emitted empty grid rows when one row had no cells), v0.0.65 (HTML report missing Registrant country cell), v0.0.64 (RFC citation in Nameservers tooltip was wrong), v0.0.62 (web result page hid registration card when only registry-lock data was present), v0.0.53 (audit pass: validation, cancellation, write errors, and TTL cleanup), v0.0.52 (web concurrency: SSRF gate no longer blocks the event loop), v0.0.50 (CT failover correctness), v0.0.49 (registration data integrity + safety), v0.0.45 (securityheaders.com local grade synthesis when third-party blocks us), v0.0.44 (securityheaders.com HTML fallback for removed X-Grade header), v0.0.39 (HEAD requests on public routes returned 405), v0.0.36 (footer link color on inner pages), v0.0.29 (report parity audit: 4 content drifts between markdown / HTML / CLI summary), v0.0.25 (homepage GitHub button), v0.0.24 (per-scanner bug audit, 4 real bugs across 12 scanners), v0.0.22 (template syntax bug that blanked every page), v0.0.13 (file-by-file bug audit), v0.0.11 (per-scanner audit, 4 real bugs across 12 scanners), v0.0.10 / v0.0.7 / v0.0.6 / v0.0.5 (core logic + UI early-iteration fixes; v0.0.5 has two `### Fixed` sub-sections), v0.0.3 and v0.0.2 (early bootstrapping fixes).
+  - **7 broad code-audit passes** (v0.0.12, v0.0.21, v0.0.24, v0.0.35, v0.0.49, v0.0.61, and today's v0.0.72 audit). The signal that we were ready for `1.0`: today's audit found 1 real bug across 17 modules, the lowest yield of any audit in the project's history. The four prior audits each found 4+ bugs.
+  - **51 automated tests** under `tests/`, gated by `.github/workflows/test.yml` on every push to `main` and on every PR. Coverage spans `grading.py` weighted-mean math + bucket boundaries, `_retry.py` exponential-backoff and `RetryExhausted` semantics, `urlutil.py` URL normalization + SSRF gate, all 12 scanners' response-parsing paths via `respx` mocks (DNSSEC AD-flag, SSL Labs worst-of-endpoints, Mozilla Observatory negative-score clamp, Email auth apex-walk, crt.sh→CertSpotter failover, etc.), markdown-vs-HTML render parity, and 4 web-route security/error paths (cross-origin POST → 403, capacity → 503 with Retry-After, unknown job → 404, missing report → 404). Full suite runs in ~0.4s; no real network calls.
+- **Web surface counterpart** documented in [CHANGELOG_WEB.md](./CHANGELOG_WEB.md) under the same `[1.0.0]` header.
+
+## [0.0.72] - 2026-05-10
+
+### Fixed (IANA RDAP bootstrap silently disabled forever after one parse-but-empty response)
+
+- **`urlreporter/registration.py:_get_bootstrap` no longer caches an empty `_bootstrap` mapping** when the IANA bootstrap fetch returns 200 + valid JSON but the inner loop extracts zero TLD→URL pairs (e.g. `{"services": []}`, or every entry malformed). The function's own docstring already promised this guarantee — *"On any failure (network, non-200, malformed JSON) we return an empty mapping WITHOUT populating `_bootstrap`, so the next scan gets to retry. Caching the empty result would silently disable registration lookups for the lifetime of the process after a single transient blip."* — and the early-return paths for HTTP / network / non-JSON errors honored it, but the success-but-empty path violated it: it assigned `_bootstrap = out` with `out = {}` and every subsequent scan returned the cached `{}` without re-querying. After the fix, an empty parse logs a warning and returns `{}` without populating the global, so the next scan retries against IANA.
+- **Realistic impact is low** — IANA's `https://data.iana.org/rdap/dns.json` is well-maintained and not empty in practice — but the bug was a documented intent violation and surfaced during the audit pass on the registration / RDAP path.
+
+### Notes
+
+- **One-line behavioral fix** plus a `log.warning` for visibility. No change to `_parse_rdap`, `fetch_registration`, the bootstrap-locking pattern, or any caller of `_get_bootstrap`.
+- **Web template footers got a separate change** in lockstep: the four internal-page links (Score / Scanners / About / Contact) in every template's `<footer>` now carry `target="_blank" rel="noopener noreferrer"` so they open in a new tab. See [CHANGELOG_WEB.md](./CHANGELOG_WEB.md) for the per-template detail and the implicit reversal of the v0.0.70 progress-page decision.
 
 ## [0.0.71] - 2026-05-10
 

@@ -1,6 +1,8 @@
 # Url Reporter
 
-> Live at **[urlreporter.com](https://urlreporter.com)**. Current version: **v0.0.71**. See [CHANGELOG.md](./CHANGELOG.md) for release notes.
+> Live at **[urlreporter.com](https://urlreporter.com)**. Current version: **v1.0.1**. See [CHANGELOG.md](./CHANGELOG.md) for release notes.
+
+> **v1.0.0: first stable release.** After 71 development iterations, 25 bug-fix releases, a final audit pass that found only one bug across 17 modules, and a 51-test suite covering engine math, every scanner, and web-route security paths, the project is graduating from `0.x` to a stable `1.x` line.
 
 ## What it does
 
@@ -170,7 +172,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/). All changes a
 
 ## Credits
 
-Url Reporter v0.0.71, made by [Paolo Diomede](https://pdiomede.com).
+Url Reporter v1.0.1, made by [Paolo Diomede](https://pdiomede.com).
 
 ## License
 

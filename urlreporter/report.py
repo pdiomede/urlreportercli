@@ -363,7 +363,7 @@ def _render_registration_html(reg) -> list[str]:
     if reg.registry_locked is True:
         cells_row2.append((
             "Registry lock",
-            "On <span class='reg-sub'>via the TLD registry (out-of-band auth)</span>",
+            "On <span class='reg-sub'>via the TLD registry<br>(out-of-band auth)</span>",
             "reg-good",
             "Registry-level lock is active (serverUpdateProhibited and/or related codes). "
             "Changes to nameservers, contacts, or DNSSEC require out-of-band verification at "
@@ -373,7 +373,7 @@ def _render_registration_html(reg) -> list[str]:
     elif reg.registry_locked is False:
         cells_row2.append((
             "Registry lock",
-            "Off <span class='reg-sub'>via the TLD registry (out-of-band auth)</span>",
+            "Off <span class='reg-sub'>via the TLD registry<br>(out-of-band auth)</span>",
             "reg-warning",
             "No registry-level lock is set. Without serverUpdateProhibited, a compromised "
             "registrar account can swap nameservers and redirect this domain. This is the attack "
