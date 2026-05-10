@@ -5,6 +5,17 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2026-05-10
+
+### Changed (unsigned-DNSSEC registration cell now renders an orange warning bar)
+
+- **`urlreporter/report.py:_render_registration_html` updated:** the unsigned-DNSSEC branch (`elif reg.dnssec is False`) now passes `"reg-warning"` as the urgency class instead of an empty string, so the cell picks up the orange left border and tinted value text — matching how Registrar lock OFF, Registry lock OFF, and the single-nameserver case already render. Previously this branch fell through to the default gray border, leaving the cell visually neutral despite its tooltip warning about cache-poisoning / MITM risk. Pure visual classification — no data shape, no tooltip copy, no CSS change (`.reg-cell.reg-warning` was already defined). The web template got the matching change in lockstep; see [CHANGELOG_WEB.md](./CHANGELOG_WEB.md).
+
+### Notes
+
+- **No engine, scanner, parser, runner, grading, retry, URL-normalization, web-route, or CLI-flag change** between v1.0.1 and v1.0.2. The 51-test suite is byte-identical and still passes — the change touches only the urgency string fed into the registration HTML cell layout.
+- **Why orange, not red:** the existing visual language reserves red (`reg-critical`) for stronger cases. Unsigned DNSSEC is in the same "registry-side state worth flagging" tier as locks-off and single-NS, all of which are already orange.
+
 ## [1.0.1] - 2026-05-10
 
 ### Changed (registry-lock cell now wraps "(out-of-band auth)" to a new line)

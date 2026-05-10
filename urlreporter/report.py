@@ -335,7 +335,7 @@ def _render_registration_html(reg) -> list[str]:
         cells_row2.append((
             "DNSSEC",
             "Unsigned",
-            "",
+            "reg-warning",
             "No DS record is published in the parent zone, so DNS responses cannot "
             "be cryptographically validated. Cache-poisoning or MITM attacks on "
             "resolvers could redirect this domain undetected.",
