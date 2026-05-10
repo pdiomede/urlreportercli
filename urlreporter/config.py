@@ -14,6 +14,7 @@ class Config:
     ssl_labs_use_cache: bool
     user_agent: str
     internetnl_api_token: str | None
+    stats_hide_hostnames: bool
     source_files: list[Path]
 
 
@@ -40,6 +41,7 @@ _RECOGNIZED_KEYS: tuple[str, ...] = (
     "SSL_LABS_USE_CACHE",
     "HTTP_USER_AGENT",
     "INTERNETNL_API_TOKEN",
+    "STATS_HIDE_HOSTNAMES",
 )
 
 
@@ -107,5 +109,6 @@ def load_config(config_path: Path | None = None) -> Config:
         ssl_labs_use_cache=_as_bool(merged.get("SSL_LABS_USE_CACHE"), True),
         user_agent=merged.get("HTTP_USER_AGENT") or "urlreporter/0.1",
         internetnl_api_token=token,
+        stats_hide_hostnames=_as_bool(merged.get("STATS_HIDE_HOSTNAMES"), False),
         source_files=used,
     )
