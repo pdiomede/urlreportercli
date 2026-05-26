@@ -5,6 +5,16 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.3] - 2026-05-26
+
+### Removed (Google Analytics)
+
+- **Google Analytics (GA4) removed from the app.** Deleted `urlreporter/static/gtag-init.js` and removed the two-line gtag snippet (`<script async src="https://www.googletagmanager.com/gtag/js?id=G-6NCTMMRH1H">` + the `/static/gtag-init.js` loader) from all seven templates: `index.html`, `about.html`, `contact.html`, `score.html`, `scanners.html`, `result.html`, `progress.html`. The app no longer loads `googletagmanager.com` or sends any analytics traffic.
+
+### Notes
+
+- **Web-surface-only change.** No engine, scanner, runner, grading, retry, URL-normalization, web-route, or CLI-flag changes. The change is mirrored in [CHANGELOG_WEB.md](./CHANGELOG_WEB.md).
+
 ## [1.0.2] - 2026-05-10
 
 ### Changed (unsigned-DNSSEC registration cell now renders an orange warning bar)
