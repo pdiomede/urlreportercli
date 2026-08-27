@@ -1,22 +1,30 @@
 # Url Reporter
 
-> Live at **[urlreporter.com](https://urlreporter.com)**. Current version: **v1.0.3**. See [CHANGELOG.md](./CHANGELOG.md) for release notes.
+> Current version: **v1.0.4**. See [CHANGELOG.md](./CHANGELOG.md) for release notes.
 
-> **v1.0.0: first stable release.** After 71 development iterations, 25 bug-fix releases, a final audit pass that found only one bug across 17 modules, and a 51-test suite covering engine math, every scanner, and web-route security paths, the project is graduating from `0.x` to a stable `1.x` line.
+A command-line tool that aggregates twelve public security scanners into one report for any URL.
 
 ## What it does
 
-Paste a URL and get one report on how exposed the site is, drawn from twelve public security scanners run in parallel. You get:
+Point it at a URL and get one report on how exposed the site is, drawn from twelve public security
+scanners run in parallel. You get:
 
-- a one-screen **summary** (a big letter at the top, top recommendations, per-scanner breakdown), and
-- a **detailed report** you can download as either Markdown or a self-contained HTML file.
+- a one-screen **summary** printed to your terminal (a big letter at the top, top recommendations,
+  per-scanner breakdown), and
+- a **detailed report** saved to disk as Markdown, or as a self-contained HTML file with `--html`.
 
-Two ways to use it:
+```bash
+urlreporter scan https://example.com
+```
 
-- **CLI** (`urlreporter scan <url>`): prints the summary to your terminal with a live per-scanner progress block and saves the Markdown report to `./reports/`. Pass `--html` to also save the self-contained HTML report. The Markdown report is written incrementally after every scanner finishes, so a `Ctrl-C` mid-scan still leaves a usable file on disk; the HTML sibling is written at completion or from the latest partial report on interrupt.
-- **Web UI** (`./runUrlReporter.sh`): paste a URL, watch a live progress page (real-time bar + per-scanner emoji status table), then read the result page and click either *Download HTML* or *Download Markdown*. Markdown is written to disk after each scanner finishes, so even if the server is killed mid-scan the `.md` file has everything that completed; the heavier self-contained HTML file is written when the scan reaches its final result or error state.
+While the scan runs, a live per-scanner progress block is drawn on stderr (updated in place on a
+TTY, plain lines when piped). The Markdown report is written **incrementally** after every scanner
+finishes, so a `Ctrl-C` mid-scan still leaves a usable file on disk; the HTML sibling is written at
+completion, or from the latest partial report on interrupt.
 
-The tool is **passive**: every check either reads a third-party scanner's API or does a single GET to the target. It generates no load, sends no payloads, and requires no authorization to scan any public URL.
+The tool is **passive**: every check either reads a third-party scanner's API or does a single GET
+to the target. It generates no load, sends no payloads, and requires no authorization to scan any
+public URL.
 
 ## Scanners
 
@@ -37,17 +45,16 @@ By default `urlreporter` queries:
 | 11 | Email auth (SPF / DMARC / DKIM) | TXT lookups via Cloudflare DoH for SPF on the apex, DMARC on `_dmarc.<host>`, and DKIM probed across 10 common selectors. Scores by policy strictness (`-all` > `~all` > `+all`; `p=reject` > `p=quarantine` > `p=none`). |
 | 12 | security.txt (RFC 9116) | Fetches `/.well-known/security.txt` (then `/security.txt` as legacy fallback), parses it, and grades on canonical-location compliance, `Contact:` presence, and a parseable, future-dated `Expires:` field. |
 
-Failed scanners are isolated: one timing out, erroring, or returning garbage does not stop the others. Every outbound HTTP call retries on transient errors (5xx, 429, network timeouts) before reporting failure. Markdown reports are written incrementally as each scanner finishes, so even if the web server is killed mid-scan the `.md` file on disk reflects everything that completed.
-
-## Architecture
-
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for details on the design, module breakdown, request lifecycle, and file structure.
+Failed scanners are isolated: one timing out, erroring, or returning garbage does not stop the
+others. Every outbound HTTP call retries on transient errors (5xx, 429, network timeouts) before
+reporting failure. Markdown reports are written incrementally as each scanner finishes, so even if
+the process is interrupted mid-scan the `.md` file on disk reflects everything that completed.
 
 ## Install
 
 ```bash
-git clone https://github.com/pdiomede/urlreporter.git
-cd urlreporter
+git clone https://github.com/pdiomede/urlreportercli.git
+cd urlreportercli
 python3 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
@@ -64,7 +71,7 @@ Python 3.11+ required (tested on 3.14).
 >
 > Outside iCloud Drive, neither is necessary; the standard `urlreporter` command works directly.
 
-## CLI
+## Usage
 
 ```bash
 urlreporter scan https://example.com
@@ -73,34 +80,62 @@ urlreporter scan https://example.com
 ./bin/urlreporter scan https://example.com
 ```
 
-Options:
+The URL is normalized before anything runs: `https://` is prepended when no scheme is given, and
+`javascript:` / `data:` / `file:` / `ftp:` schemes, control characters, embedded credentials,
+malformed hosts, and out-of-range ports are rejected outright.
+
+Options for `scan`:
 
 - `--config PATH`: alternate `config.env`
 - `--out PATH`: output filename (default: `./reports/urlreporter-<host>-<timestamp>.md`)
 - `--quiet`: suppress the stdout summary and progress display
 - `--only ssl_labs,mozilla_observatory`: run only the listed scanners (overrides `config.env`)
-- `--html`: also write a self-contained HTML report next to the `.md` file (same renderer the web UI uses)
+- `--html`: also write a self-contained HTML report next to the `.md` file
 
-The CLI also exposes a methodology page equivalent to the web UI's `/score`:
-
-```bash
-urlreporter explain-score
-```
-
-Markdown reports are written **incrementally** after every scanner finishes, so a Ctrl-C mid-scan or an unexpected engine error still leaves a usable `.md` file on disk with everything that completed. When `--html` is set, the self-contained HTML sibling is written at completion, or from the latest partial report if the CLI exits through its interrupt/error handler.
-
-Exit codes: `0` on success, `1` if every scanner failed (or the engine raised mid-flight), `2` for argument errors, `130` if the scan was interrupted with Ctrl-C (POSIX convention for SIGINT; partial report still on disk).
-
-## Web UI
+Two more commands:
 
 ```bash
-./runUrlReporter.sh             # 127.0.0.1:8000
-./runUrlReporter.sh 8080        # 127.0.0.1:8080
-./runUrlReporter.sh 8080 0.0.0.0  # LAN-visible
-CH_RELOAD=1 ./runUrlReporter.sh # uvicorn auto-reload (dev)
+urlreporter explain-score   # plain-English walkthrough of how the overall grade is calculated
+urlreporter --version
 ```
 
-Then open http://localhost:8000. The web form uses the scanner defaults from `config.env`; for one-off scanner subsets, use the CLI's `--only` option.
+Exit codes: `0` on success, `1` if every scanner failed (or the engine raised mid-flight), `2` for
+argument errors, `130` if the scan was interrupted with Ctrl-C (POSIX convention for SIGINT; partial
+report still on disk).
+
+## Reports
+
+Reports are written to `./reports/` by default, named
+`urlreporter-<host>-<timestamp>.md`. Pass `--out PATH` to choose a different location; the parent
+directory is created if it does not exist. With `--html`, a self-contained HTML file (embedded
+styles plus a print stylesheet, so it prints or exports to PDF cleanly) is written alongside the
+`.md` with the same basename.
+
+The `.md` file is re-rendered after every scanner finishes, so it is always current with whatever
+has completed. The `.html` sibling is rendered once at the end — full inline-CSS HTML is too
+expensive to rewrite on every scanner, and nothing reads it mid-scan.
+
+Nothing prunes `./reports/` automatically: the directory is gitignored and grows until you clean it
+up.
+
+## How it works
+
+1. **`urlutil.normalize_url()`** validates and canonicalizes the input URL — the single gate every
+   scan passes through.
+2. **`config.load_config()`** merges the package defaults, `config.env`, `config.env.local`, and the
+   process environment (in that order of increasing priority) into a `Config` describing which
+   scanners are enabled and the tunables.
+3. **`runner.run_scans()`** instantiates every enabled scanner from `scanners/__init__.py:REGISTRY`
+   and runs them concurrently under one shared `httpx.AsyncClient`, emitting progress events as it
+   goes. Each scanner is wrapped so an exception becomes a failed `ScanResult` rather than
+   cancelling its siblings. Every outbound request goes through `scanners/_retry.py:retry_request`,
+   which backs off on transient errors (3s / 8s / 20s) and logs each attempt.
+4. **`grading.aggregate_score()`** converts letters to numbers and takes a weighted mean over the
+   scanners that returned one, then maps the result back to a letter.
+5. **`report.py`** renders three ways from the same data: `render_summary()` for the terminal,
+   `render_markdown()` for the `.md` file, `render_html()` for the self-contained HTML document.
+6. **`logging_setup.setup_logger()`** attaches one file handler per process so retries, failures,
+   and tracebacks land in `./logs/`.
 
 ## Configuration (`config.env`)
 
@@ -125,39 +160,35 @@ HTTP_USER_AGENT=urlreporter/0.1
 INTERNETNL_API_TOKEN=
 ```
 
+Booleans accept `1` / `true` / `yes` / `on`. Copy `config.env.example` to `config.env.local` for
+personal overrides and tokens — it is gitignored and takes priority over `config.env`.
+
 ## Logs
 
-Every process run creates `./logs/error_<YYYYMMDD-HHMMSS>.log`. WARNING and above go there: scanner retries (each attempt with the reason), persistent-failure verdicts, unexpected scanner exceptions with full tracebacks, and any callback errors raised inside the runner. The `logs/` directory is gitignored.
-
-## Reports
-
-Generated reports live in `./reports/`. The web app re-writes `<id>.md` (Markdown) after each scanner finishes, then writes `<id>.html` (self-contained HTML, with embedded styles and a print stylesheet) when the scan reaches its final result or error state. A `<id>.name` sibling holds the human-friendly filename used for the download. All three are removed when older than 24 hours.
-
-### Cleanup in production
-
-The in-app `_cleanup_old_reports()` (in `web.py`) runs **once at uvicorn startup** and prunes stale `.md`, `.html`, and `.name` files older than 24h, including orphaned sidecars. That's enough for short-lived processes, but a long-running production uvicorn lets old files accumulate between restarts. The recommended complement is an external scheduler that runs hourly:
-
-```bash
-# /usr/local/bin/urlreporter-cleanup
-#!/usr/bin/env bash
-find /var/www/urlreporter/reports -type f \
-  \( -name '*.md' -o -name '*.html' -o -name '*.name' \) \
-  -mmin +1440 -delete
-```
-
-Wire it to a systemd timer (`urlreporter-cleanup.timer`, `OnUnitActiveSec=1h`) or a `crontab -e` entry (`0 * * * * /usr/local/bin/urlreporter-cleanup`). With either, reports are pruned regardless of the app lifecycle, so disk pressure and stale-file lifespan stay bounded.
+Every process run creates `./logs/error_<YYYYMMDD-HHMMSS>.log`. WARNING and above go there: scanner
+retries (each attempt with the reason), persistent-failure verdicts, unexpected scanner exceptions
+with full tracebacks, and any callback errors raised inside the runner. The `logs/` directory is
+gitignored.
 
 ## How the overall grade is calculated
 
-Each scanner returns a number from 0 to 100. The overall number is a **weighted** average of every scanner that returned one. Three weight tiers:
+Each scanner returns a number from 0 to 100. The overall number is a **weighted** average of every
+scanner that returned one. Three weight tiers:
 
 - **Weight 2.0** - real cryptographic / authentication posture: SSL Labs, Mozilla Observatory, DNSSEC, Email auth (SPF/DMARC/DKIM).
 - **Weight 1.5** - meaningful but narrower: HTTP→HTTPS redirect, securityheaders.com.
 - **Weight 1.0** - hardening extras and hygiene markers: CAA, DoS posture, HSTS Preload, security.txt, crt.sh, internet.nl.
 
-Link-out scanners (no public API) and scanners that errored are skipped, and listed separately in the report. The weighted average is rounded to a whole number and mapped to a letter (90 or more is A+, 85 to 89 is A, and so on down to under 35 is F).
+Link-out scanners (no public API) and scanners that errored are skipped, and listed separately in
+the report. The weighted average is rounded to a whole number and mapped to a letter (90 or more is
+A+, 85 to 89 is A, and so on down to under 35 is F).
 
-The full breakdown, with the letter-to-number table and the honest caveats about the methodology, is on the **`/score`** page (linked from every footer as `OUR SCORE`).
+For the full breakdown — the letter-to-number table, the weight tiers, and the honest caveats about
+the methodology — run:
+
+```bash
+urlreporter explain-score
+```
 
 ## Adding a scanner
 
@@ -172,7 +203,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/). All changes a
 
 ## Credits
 
-Url Reporter v1.0.3, made by [Paolo Diomede](https://pdiomede.com).
+Url Reporter v1.0.4, made by [Paolo Diomede](https://pdiomede.com).
 
 ## License
 
