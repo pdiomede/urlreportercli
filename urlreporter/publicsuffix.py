@@ -100,14 +100,49 @@ _MULTI_LABEL_SUFFIXES: frozenset[str] = frozenset({
     # Canada / US second levels in common use
     "gc.ca", "qc.ca", "on.ca", "ab.ca", "bc.ca",
     "k12.us", "state.us", "lib.us",
+
+    # --- PSL "private section": platforms that hand out subdomains ---
+    # Not registry suffixes, but the same boundary for our purposes — whoever
+    # owns `myapp.vercel.app` does not control `vercel.app`'s DNS. Omitting
+    # these was the more damaging half of the bug, because these hosts are far
+    # likelier to be scanned than a ccTLD second-level. Verified live over DoH:
+    # `vercel.app` and `netlify.app` publish SPF *and* DMARC, `github.io`
+    # publishes SPF and six CAA records, `amazonaws.com` publishes MX, SPF and
+    # DMARC. A scan of `myapp.vercel.app` scored A+/100 on both CAA and email
+    # auth on records belonging entirely to Vercel.
+    "github.io", "githubusercontent.com",
+    "vercel.app", "netlify.app", "netlify.live",
+    "pages.dev", "workers.dev",
+    "herokuapp.com", "herokudns.com",
+    "web.app", "firebaseapp.com", "appspot.com",
+    "azurewebsites.net", "azurestaticapps.net", "cloudapp.net",
+    "amazonaws.com", "s3.amazonaws.com", "elasticbeanstalk.com",
+    "cloudfront.net",
+    "onrender.com", "fly.dev", "railway.app", "surge.sh", "glitch.me",
+    "repl.co", "ngrok.io", "translate.goog",
+    "blogspot.com", "wordpress.com", "myshopify.com", "wixsite.com",
 })
 
 
+# Longest entry in the table, so the match below knows how far back to look.
+_MAX_SUFFIX_LABELS = max(entry.count(".") + 1 for entry in _MULTI_LABEL_SUFFIXES)
+
+
 def public_suffix(host: str) -> str:
-    """The suffix portion of `host` — the part registered *under*, not *by*."""
+    """The suffix portion of `host` — the part registered *under*, not *by*.
+
+    Longest match wins. The first version of this compared only the last two
+    labels, which meant an entry like `s3.amazonaws.com` could sit in the table
+    and never be consulted: `bucket.s3.amazonaws.com` matched `amazonaws.com`
+    and stopped there, so the walk still entered `s3.amazonaws.com` — itself a
+    suffix. Three-label suffixes were unrepresentable rather than merely
+    absent, which is the sort of gap that looks fixed from the table alone.
+    """
     labels = host.lower().strip(".").split(".")
-    if len(labels) >= 2 and ".".join(labels[-2:]) in _MULTI_LABEL_SUFFIXES:
-        return ".".join(labels[-2:])
+    for size in range(min(_MAX_SUFFIX_LABELS, len(labels)), 1, -1):
+        candidate = ".".join(labels[-size:])
+        if candidate in _MULTI_LABEL_SUFFIXES:
+            return candidate
     return labels[-1]
 
 

@@ -88,6 +88,30 @@ class CAAScanner:
             )
         link = REPORT_URL.format(host=host)
 
+        if not _parent_domains(host):
+            # No registrable domain: an IP literal, or a bare public suffix.
+            # CAA is published against a domain name, so there is nothing to
+            # check — reporting "No CAA records" with a D/40 stated a finding
+            # about a name that cannot have one, and fed it into the average.
+            return ScanResult(
+                scanner=self.name, ok=True, grade=None, score=None,
+                summary=(
+                    f"Skipped: {host} has no registrable domain, so CAA does "
+                    "not apply to it."
+                ),
+                findings=[Finding(
+                    severity="info",
+                    title=f"CAA not applicable to {host}",
+                    detail=(
+                        "CAA records are published against a domain name. An IP "
+                        "address or a bare public suffix has no owner to publish "
+                        "them, so this scanner is excluded from the overall score "
+                        "rather than graded as if the records were missing."
+                    ),
+                )],
+                link=link,
+            )
+
         records: list[str] = []
         matched_at: str | None = None
         # CAA is inherited from the closest ancestor that has a record. A

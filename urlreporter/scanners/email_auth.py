@@ -178,7 +178,33 @@ class EmailAuthScanner:
         link = REPORT_URL.format(host=host)
 
         parents = _parent_domains(host)
-        apex = parents[-1] if parents else host
+        if not parents:
+            # No registrable domain: an IP literal, or a bare public suffix.
+            # SPF, DMARC and DKIM are properties of a DNS name someone owns, so
+            # there is nothing here to get right or wrong. Grading it produced a
+            # fabricated F/0 that fed the weighted average at weight 2.0 —
+            # previously masked because the old walk invented parent names
+            # ("1.1.1.1" -> "1.1.1", "1.1") and tripped the subdomain link-out
+            # by accident. Say "not applicable" on purpose instead.
+            return ScanResult(
+                scanner=self.name, ok=True, grade=None, score=None,
+                summary=(
+                    f"Skipped: {host} has no registrable domain, so email "
+                    "authentication does not apply to it."
+                ),
+                findings=[Finding(
+                    severity="info",
+                    title=f"Email auth not applicable to {host}",
+                    detail=(
+                        "SPF, DMARC and DKIM are published against a domain name. "
+                        "An IP address or a bare public suffix has no owner to "
+                        "publish them, so this scanner is excluded from the "
+                        "overall score rather than scored zero."
+                    ),
+                )],
+                link=link,
+            )
+        apex = parents[-1]
         is_subdomain = len(parents) >= 2
 
         # Build query plan: SPF, DMARC, and MX for every ancestor in parallel,
