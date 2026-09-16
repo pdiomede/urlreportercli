@@ -5,6 +5,19 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed (upper bound on httpx)
+
+- **`httpx` is now capped at `>=0.27,<1`.** CI resolves dependencies fresh on every run against unbounded `>=` specifiers, so a major release upstream becomes a red build with no commit of ours involved. Every one of the twelve scanners is built on `httpx` directly — `AsyncClient`, `Headers`, the `RequestError`/`HTTPStatusError` taxonomy that `scanners/_retry.py` branches on — and `respx`, which the test suite mocks with, pins to `httpx` as well, so a major migration would not be a one-line change. The installed 0.28.1 satisfies the bound; nothing else changes.
+- **Why now.** `httpx2` is real and already published at 2.13.0, and Starlette 1.0 has begun deprecating `httpx` in favour of it. That transition does not touch this package — the CLI tree ships no web framework — but it does mean the `httpx` 0.x line now has a visible successor, which is exactly when an unbounded `>=` stops being free.
+
+### Notes
+
+- **No version bump.** A packaging constraint only: no engine, scanner, parser, runner, grading, retry, URL-normalization, report-format or CLI-flag change, and no behaviour change at any currently-installed version. It will fold into the next tagged release.
+- **A stale version string corrected.** `README.md`'s credits footer read `Url Reporter v1.0.4` while its header already said v1.0.5; it now reads v1.0.5. The version is documented as living in three places, but each README's footer is an unnamed fourth occurrence — which is why it drifted.
+- **The web surface took two further bounds** that do not apply here, since this package ships no `fastapi` or `starlette`: `fastapi>=0.110,<1` and `starlette>=0.46,<2`. See [CHANGELOG_WEB.md](./CHANGELOG_WEB.md).
+
 ## [1.0.5] - 2026-09-16
 
 ### Fixed (the published CLI package could not import — plus eight engine defects)

@@ -10,8 +10,11 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Paolo" }]
+# Matches the source pyproject's ceiling on httpx. The CLI tree ships no
+# fastapi/starlette, so those bounds don't apply here - but every scanner is
+# built on httpx, and httpx2 already ships at 2.x as a separate package.
 dependencies = [
-    "httpx>=0.27",
+    "httpx>=0.27,<1",
     "click>=8.1",
     "python-dotenv>=1.0",
 ]

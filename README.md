@@ -203,7 +203,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/). All changes a
 
 ## Credits
 
-Url Reporter v1.0.4, made by [Paolo Diomede](https://pdiomede.com).
+Url Reporter v1.0.5, made by [Paolo Diomede](https://pdiomede.com).
 
 ## License
 
