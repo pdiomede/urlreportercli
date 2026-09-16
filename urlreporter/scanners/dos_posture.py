@@ -47,6 +47,10 @@ CACHE_HEADERS = (
     "x-cache", "x-cache-hits", "age",
 )
 
+# Freshness directives in a Cache-Control header. `s-maxage` is listed first so
+# the alternation prefers it over the `max-age` substring inside it.
+_MAXAGE_RE = re.compile(r"(s-maxage|max-age)\s*=\s*(\d+)")
+
 
 def _detect_cdn(headers: httpx.Headers) -> list[str]:
     lower = {k.lower(): v.lower() for k, v in headers.items()}
@@ -72,8 +76,11 @@ def _has_useful_cache(headers: httpx.Headers) -> tuple[bool, str]:
     cc = headers.get("cache-control", "").lower()
     if "no-store" in cc or "private" in cc:
         return False, f"cache-control: {cc}"
-    m = re.search(r"(s-maxage|max-age)\s*=\s*(\d+)", cc)
-    if m and int(m.group(2)) > 0:
+    # Check every freshness directive, not just the first one. `max-age=0,
+    # s-maxage=3600` is the standard "browsers revalidate, the edge caches"
+    # pattern; matching only the leftmost directive read that as uncacheable
+    # purely because of the order the origin wrote them in.
+    if any(int(value) > 0 for _, value in _MAXAGE_RE.findall(cc)):
         return True, f"cache-control: {cc.strip()}"
     age_raw = headers.get("age")
     if age_raw:

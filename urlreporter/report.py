@@ -208,6 +208,23 @@ def _esc(value: object) -> str:
     return _html.escape("" if value is None else str(value), quote=True)
 
 
+def _safe_link(url: object) -> str:
+    """Return `url` only if it is http(s), else "".
+
+    Mirrors `registration._safe_http_url` and progress-poll.js's `safeHref`.
+    Escaping handles special characters but not dangerous *schemes*, so a
+    `javascript:` value reaching `ScanResult.link` would render as a live
+    href in a report people open and forward. Every scanner builds `link`
+    from a constant plus a validated host today, so this is defence in
+    depth — but it is the same defence the RDAP path and the live progress
+    table already apply to exactly this kind of value.
+    """
+    if not isinstance(url, str):
+        return ""
+    s = url.strip()
+    return s if s.lower().startswith(("http://", "https://")) else ""
+
+
 def _format_timestamp(dt) -> str:
     """Format a UTC datetime as e.g. '3/May/2026 at 22:33 UTC'."""
     return f"{dt.day}/{dt.strftime('%b')}/{dt.year} at {dt.strftime('%H:%M')} UTC"
@@ -1233,9 +1250,10 @@ def render_html(report: Report, log_path: str | None = None) -> str:
     parts.append("<tbody>")
     for r in report.results:
         parts.append("<tr>")
-        if r.link:
+        row_link = _safe_link(r.link)
+        if row_link:
             parts.append(
-                f"<td><a href='{_esc(r.link)}' target='_blank' rel='noopener noreferrer'>"
+                f"<td><a href='{_esc(row_link)}' target='_blank' rel='noopener noreferrer'>"
                 f"{_esc(r.scanner)}</a></td>"
             )
         else:
@@ -1247,9 +1265,9 @@ def render_html(report: Report, log_path: str | None = None) -> str:
         parts.append("<td>")
         if r.ok:
             parts.append(_linkify_html(r.summary or ""))
-            if r.score is None and r.grade is None and r.link:
+            if r.score is None and r.grade is None and row_link:
                 parts.append(
-                    f"<div><a href='{_esc(r.link)}' target='_blank' rel='noopener noreferrer'>"
+                    f"<div><a href='{_esc(row_link)}' target='_blank' rel='noopener noreferrer'>"
                     f"Open external scan ↗</a></div>"
                 )
         else:

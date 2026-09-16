@@ -109,6 +109,14 @@ class CAAScanner:
                     label=f"{self.name} {candidate}", logger=log,
                 )
                 if resp.status_code >= 400:
+                    # A non-transient HTTP error tells us nothing about the
+                    # domain's CAA posture, so it counts as a failed lookup
+                    # exactly like a network error does. Without this the
+                    # all-ancestors-failed check below never fired for an
+                    # HTTP-error-only walk and the domain was handed a
+                    # "No CAA records" D/40 that fed the weighted average.
+                    last_error = f"DoH returned HTTP {resp.status_code} for {candidate}"
+                    network_failures += 1
                     log.warning("%s: DoH returned HTTP %d for %s", self.name, resp.status_code, candidate)
                     continue
                 data = resp.json()

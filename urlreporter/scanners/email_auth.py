@@ -204,11 +204,27 @@ class EmailAuthScanner:
                     )
                 )
 
-        try:
-            results = await asyncio.gather(*spf_qs, *dmarc_qs, *mx_qs, *dkim_qs)
-        except RetryExhausted as e:
-            log.error("%s: %s", self.name, e)
-            return ScanResult(scanner=self.name, ok=False, error=str(e), link=link)
+        # `return_exceptions=True` matters here: a bare gather completes as soon
+        # as one child raises but leaves the other ~20 DoH lookups running, so
+        # returning early orphaned them onto the shared AsyncClient that
+        # run_scans is about to close (and kept hammering Cloudflare after this
+        # scanner had already given up). Collect every outcome, then decide.
+        results = await asyncio.gather(
+            *spf_qs, *dmarc_qs, *mx_qs, *dkim_qs, return_exceptions=True
+        )
+        first_failure = next((r for r in results if isinstance(r, BaseException)), None)
+        if first_failure is not None:
+            if isinstance(first_failure, asyncio.CancelledError):
+                raise first_failure
+            log.error("%s: %s", self.name, first_failure)
+            # `str(...)`, not `describe_exc(...)`: RetryExhausted's message is
+            # already self-describing and report.explain_error matches on its
+            # exact wording. Keep the string byte-identical to what the old
+            # `except RetryExhausted as e: str(e)` produced.
+            return ScanResult(
+                scanner=self.name, ok=False,
+                error=str(first_failure) or describe_exc(first_failure), link=link,
+            )
 
         n = len(parents)
         spf_per_parent: list[list[str]] = list(results[0:n])

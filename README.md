@@ -1,6 +1,6 @@
 # Url Reporter
 
-> Current version: **v1.0.4**. See [CHANGELOG.md](./CHANGELOG.md) for release notes.
+> Current version: **v1.0.5**. See [CHANGELOG.md](./CHANGELOG.md) for release notes.
 
 A command-line tool that aggregates twelve public security scanners into one report for any URL.
 

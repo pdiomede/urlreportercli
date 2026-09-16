@@ -316,6 +316,11 @@ def scan(url: str, config_path: Path | None, out_path: Path | None, quiet: bool,
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
         out_path = Path.cwd() / "reports" / f"urlreporter-{_safe_filename(host)}-{ts}.md"
     html_path = out_path.with_suffix(".html") if html_flag else None
+    if html_path is not None and html_path == out_path:
+        # `--out report.html --html` made both renderers target one path, so the
+        # HTML overwrote the markdown and the CLI still printed both success
+        # lines. Keep the user's path for the markdown and sidestep the HTML.
+        html_path = out_path.with_name(out_path.stem + ".report.html")
     try:
         out_path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as e:

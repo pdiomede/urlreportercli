@@ -200,7 +200,11 @@ def _grade(
     recent_certs = []
     for c in certs:
         ts = (c or {}).get("entry_timestamp") or (c or {}).get("not_before")
-        if not ts:
+        # Upstreams have been known to send a numeric timestamp here. `.replace`
+        # on a non-string raises AttributeError, which the except clause below
+        # does not catch, so one odd record took the whole scanner down instead
+        # of being skipped like any other unparseable date.
+        if not ts or not isinstance(ts, str):
             continue
         try:
             dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))

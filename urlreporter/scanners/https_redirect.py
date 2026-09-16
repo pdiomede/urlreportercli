@@ -11,6 +11,11 @@ from .base import Finding, ScanResult
 log = logging.getLogger(__name__)
 
 
+def _authority(host: str) -> str:
+    """Host as it must appear in a URL: IPv6 literals need their brackets back."""
+    return f"[{host}]" if ":" in host else host
+
+
 class HTTPSRedirectScanner:
     """Verify that http://<host> redirects to https://<host>.
 
@@ -26,7 +31,12 @@ class HTTPSRedirectScanner:
         host = urlparse(url).hostname
         if not host:
             return ScanResult(scanner=self.name, ok=False, error="Could not parse host from URL.", link=url)
-        plain_url = f"http://{host}/"
+        # `urlparse().hostname` strips the brackets from an IPv6 literal, and
+        # normalize_url accepts those. Putting the bare address back into a URL
+        # makes everything after the first colon look like a port, which httpx
+        # rejects with `InvalidURL` — not an HTTPError, so it escaped both
+        # except clauses below and surfaced as an unhandled scanner exception.
+        plain_url = f"http://{_authority(host)}/"
         link = plain_url
 
         chain: list[str] = []

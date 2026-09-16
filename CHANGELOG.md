@@ -5,6 +5,46 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.5] - 2026-09-16
+
+### Fixed (the published CLI package could not import — plus eight engine defects)
+
+- **`urlreporter` was unusable when installed from this repo.** `urlreporter/registration.py` was added to the package but never added to the `ALLOWLIST` in the mirror script that builds this repo, so the published tree shipped a `runner.py` whose `from .registration import RegistrationInfo, fetch_registration` had no target. Every invocation died before parsing a single argument:
+
+  ```
+  File "urlreporter/runner.py", line 14, in <module>
+      from .registration import RegistrationInfo, fetch_registration
+  ModuleNotFoundError: No module named 'urlreporter.registration'
+  ```
+
+  The module is now in the allowlist. Two guards were added so this class of drift cannot recur silently: the build refuses to publish when any `urlreporter/*.py` present in source is absent from the staged tree and not on an explicit `WEB_ONLY` opt-out list, and it then runs `python3 -c "import urlreporter.cli"` against the staged tree and aborts if it fails. The allowlist was hand-maintained and its only pre-flight checked that *listed* paths existed in source — never that every source module was listed.
+
+- **A URL carrying another URL was rejected outright** (`urlutil.py`). `normalize_url` branched on `"://" in s`, so `urlreporter scan 'example.com/r?u=https://a.b'` — an ordinary redirect or `next=` parameter, with no scheme of its own — split at the *inner* separator and exited `2` with `Unsupported URL scheme: 'example.com/r?u=https'`. Now anchored on a leading `scheme://` only. The allowlist is unchanged: `ftp://`, `file://`, `data:` and `javascript:` are still rejected.
+
+- **A resolver that refused to answer produced a confident grade** (`scanners/caa.py`). Only network and retry failures counted toward the all-ancestors-failed check, so a DoH endpoint returning a non-transient HTTP error on *every* ancestor fell through to the "No CAA records found" branch. Verified: 403 on every lookup yielded `ok=True, grade="D", score=40, summary="No CAA records on this domain or any ancestor."` — a fabricated grade, from zero signal, feeding the weighted average. Now reports `ok=False`.
+
+- **Edge-cacheable responses were graded on directive order** (`scanners/dos_posture.py`). `_has_useful_cache` inspected only the leftmost freshness directive, so `Cache-Control: max-age=0, s-maxage=3600` — the standard "browsers revalidate, the edge caches" pattern — scored `False` while the identical header written `s-maxage=3600, max-age=0` scored `True`. A 25-point swing decided by the order the origin wrote its directives in.
+
+- **One malformed record killed the whole CT scanner** (`scanners/crtsh.py`). A numeric `entry_timestamp` made `ts.replace("Z", "+00:00")` raise `AttributeError`, which the surrounding `except (TypeError, ValueError)` does not catch, aborting the scan instead of skipping the record.
+
+- **Twelve DNS lookups outlived the scanner that gave up on them** (`scanners/email_auth.py`). The scanner fans ~20 DoH queries out through `asyncio.gather`; without `return_exceptions=True` the gather completes the instant one child raises but leaves every sibling running against the shared `AsyncClient` the runner then closes — still querying Cloudflare after the scanner had reported failure. Measured: 12 lookups still pending when `scan()` returned. The error string is byte-identical to before.
+
+- **IPv6 targets crashed two scanners** (`scanners/https_redirect.py`, `scanners/security_txt.py`). `normalize_url` accepts `https://[2001:db8::1]/`, but `urlparse().hostname` returns the address without brackets and both scanners rebuilt a URL from that bare value, so everything after the first colon parsed as a port. httpx raised `httpx.InvalidURL`, which is **not** an `httpx.HTTPError`, so it escaped both `except` clauses and surfaced as an unhandled scanner exception.
+
+- **`--out report.html --html` silently destroyed the markdown report** (`cli.py`). `out_path.with_suffix(".html")` collapsed onto `out_path`, so the HTML renderer overwrote the markdown and the CLI still printed both success lines. The path you name now keeps the markdown; the HTML goes to `<stem>.report.html`.
+
+- **`ScanResult.link` reached an `href` without a scheme check** (`report.py`). A `javascript:` value would have rendered as a live link in the `--html` report — a file people open and forward. Not reachable today (every scanner builds `link` from a constant plus a validated host), but it is the same defence `registration._safe_http_url` already applies to RDAP URLs. Legitimate links and the link-out "Open external scan ↗" anchor are unaffected.
+
+### Changed
+
+- **`caa` and `dos_posture` now score some sites differently.** Both are corrections, but grades produced before and after this release are not directly comparable.
+
+### Notes
+
+- **Every fix carries a regression test verified to fail against the unfixed code** — the source file was reverted, the test run, the failure confirmed, then restored. The suite grew from 121 tests to 134.
+- **CLI-surface scope.** Three fixes in this release touch only the web surface and are therefore absent from this package: the `POST /scan` concurrency cap, the result-page behaviour when `reports/` is unwritable, and the `safe_link` filter in `templates/result.html`. All are recorded in [CHANGELOG_WEB.md](./CHANGELOG_WEB.md).
+- **No CLI flag, exit code, config key, or report format changed.** `scan`, `explain-score`, `--config`, `--out`, `--only`, `--quiet`, `--html` and exit codes `0`/`1`/`2`/`130` are unchanged.
+
 ## [1.0.3] - 2026-05-26
 
 ### Removed (Google Analytics)

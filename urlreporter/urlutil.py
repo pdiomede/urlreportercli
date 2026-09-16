@@ -29,6 +29,11 @@ _IPV4_RE = re.compile(
 # entered without `://`, e.g. `javascript:alert(1)`).
 _SCHEME_PREFIX_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*:")
 
+# A leading "scheme://" authority separator. Anchored so a "://" appearing
+# later in the input (inside a path or query, e.g. a redirect parameter) is
+# not mistaken for the URL's own scheme separator.
+_SCHEME_SEP_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://")
+
 MAX_URL_LEN = 2000
 ALLOWED_SCHEMES = ("http", "https")
 
@@ -58,7 +63,11 @@ def normalize_url(raw: str | None) -> str:
 
     # Scheme handling. We must catch both "://" and bare "scheme:" forms,
     # otherwise `javascript:alert(1)` would slip through and become a hostname.
-    if "://" in s:
+    # Only a leading "://" counts: a schemeless input may legitimately carry a
+    # nested URL in its path or query (`example.com/r?u=https://a.b`), and
+    # splitting on that occurrence made the whole prefix look like a bogus
+    # scheme and rejected a perfectly valid URL.
+    if _SCHEME_SEP_RE.match(s):
         scheme = s.split("://", 1)[0].lower()
         if scheme not in ALLOWED_SCHEMES:
             raise InvalidURL(f"Unsupported URL scheme: {scheme!r}. Only http and https are allowed.")
@@ -150,6 +159,26 @@ def _is_valid_host(host: str) -> bool:
 # operator may legitimately point it at internal hosts.
 _DNS_CACHE: dict[str, tuple[tuple[str, ...], float]] = {}
 _DNS_CACHE_TTL = 30.0
+# Entries expire by timestamp but nothing ever removed them, so on the web
+# surface — where every submitted hostname is attacker-chosen — the dict grew
+# without bound for the life of the process. Sweep expired entries once the
+# cache crosses this size.
+_DNS_CACHE_MAX = 1024
+
+
+def _prune_dns_cache(now: float) -> None:
+    """Drop expired entries. Called only when the cache is over its soft cap,
+    so the common path stays a single dict lookup."""
+    if len(_DNS_CACHE) < _DNS_CACHE_MAX:
+        return
+    for host in [h for h, (_, expiry) in _DNS_CACHE.items() if expiry <= now]:
+        _DNS_CACHE.pop(host, None)
+    if len(_DNS_CACHE) >= _DNS_CACHE_MAX:
+        # Everything is still live (a burst of distinct hosts inside one TTL).
+        # Evict oldest-first rather than let the dict grow unbounded.
+        for host in sorted(_DNS_CACHE, key=lambda h: _DNS_CACHE[h][1])[: _DNS_CACHE_MAX // 2]:
+            _DNS_CACHE.pop(host, None)
+
 
 # Hostnames that always resolve to cloud-provider metadata services.
 # Block by name (in case DNS is intercepted or proxied) in addition to
@@ -229,6 +258,7 @@ async def assert_publicly_routable(url: str) -> None:
         except socket.gaierror as e:
             raise InvalidURL(f"Could not resolve hostname: {host!r}.") from e
         ips = tuple({info[4][0] for info in infos})  # dedupe across families
+        _prune_dns_cache(now)
         _DNS_CACHE[host] = (ips, now + _DNS_CACHE_TTL)
 
     for ip_str in ips:

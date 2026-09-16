@@ -13,6 +13,18 @@ from .base import Finding, ScanResult
 
 log = logging.getLogger(__name__)
 
+
+def _authority(host: str) -> str:
+    """Host as it must appear in a URL: IPv6 literals need their brackets back.
+
+    `urlparse().hostname` drops them, and normalize_url accepts bracketed IPv6
+    targets, so rebuilding `https://{host}{path}` from the bare address made
+    everything after the first colon parse as a port. httpx raised `InvalidURL`
+    — which is not an `HTTPError`, so it bypassed the handlers below entirely.
+    """
+    return f"[{host}]" if ":" in host else host
+
+
 # RFC 9116: the canonical location is /.well-known/security.txt; the
 # pre-RFC location /security.txt is also recognized as a fallback.
 WELLKNOWN_PATH = "/.well-known/security.txt"
@@ -85,7 +97,8 @@ class SecurityTxtScanner:
             )
         # The user-facing link points at the canonical RFC URL; the result
         # page also surfaces the per-host candidate URL when found.
-        link = f"https://{host}{WELLKNOWN_PATH}"
+        authority = _authority(host)
+        link = f"https://{authority}{WELLKNOWN_PATH}"
 
         # Probe both candidate locations concurrently. Preference order
         # (well-known wins if both 200) is preserved by walking the
@@ -96,7 +109,7 @@ class SecurityTxtScanner:
         async def _try_path(path: str) -> httpx.Response | str | None:
             """Returns the Response, an error-string for retry/HTTP failures,
             or None for the rare case retry_request itself produces no value."""
-            candidate = f"https://{host}{path}"
+            candidate = f"https://{authority}{path}"
             try:
                 return await retry_request(
                     lambda: client.get(candidate, follow_redirects=True, timeout=15.0),
@@ -124,7 +137,7 @@ class SecurityTxtScanner:
         # Canonical-first: prefer /.well-known/security.txt, fall back to
         # /security.txt only if the canonical path didn't produce a usable file.
         for path in (WELLKNOWN_PATH, LEGACY_PATH):
-            candidate = f"https://{host}{path}"
+            candidate = f"https://{authority}{path}"
             r = results_by_path.get(path)
             if isinstance(r, str):
                 # Network or retry error from the gathered call.
@@ -197,7 +210,7 @@ class SecurityTxtScanner:
 
         # Score
         score = 0
-        if served_at == f"https://{host}{WELLKNOWN_PATH}":
+        if served_at == f"https://{authority}{WELLKNOWN_PATH}":
             score += 30          # canonical location: full credit
         else:
             score += 10          # legacy /security.txt only: partial credit
@@ -230,7 +243,7 @@ class SecurityTxtScanner:
             grade = "F"
 
         # Findings
-        if served_at != f"https://{host}{WELLKNOWN_PATH}":
+        if served_at != f"https://{authority}{WELLKNOWN_PATH}":
             findings.append(Finding(
                 severity="low",
                 title="security.txt served from legacy /security.txt only",
@@ -298,7 +311,7 @@ class SecurityTxtScanner:
             bits.append("expires unparseable")
         else:
             bits.append("no expires")
-        if served_at and served_at != f"https://{host}{WELLKNOWN_PATH}":
+        if served_at and served_at != f"https://{authority}{WELLKNOWN_PATH}":
             bits.append("legacy path")
         summary = "; ".join(bits)
 
