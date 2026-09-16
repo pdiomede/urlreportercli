@@ -5,19 +5,6 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Changed (upper bound on httpx)
-
-- **`httpx` is now capped at `>=0.27,<1`.** CI resolves dependencies fresh on every run against unbounded `>=` specifiers, so a major release upstream becomes a red build with no commit of ours involved. Every one of the twelve scanners is built on `httpx` directly — `AsyncClient`, `Headers`, the `RequestError`/`HTTPStatusError` taxonomy that `scanners/_retry.py` branches on — and `respx`, which the test suite mocks with, pins to `httpx` as well, so a major migration would not be a one-line change. The installed 0.28.1 satisfies the bound; nothing else changes.
-- **Why now.** `httpx2` is real and already published at 2.13.0, and Starlette 1.0 has begun deprecating `httpx` in favour of it. That transition does not touch this package — the CLI tree ships no web framework — but it does mean the `httpx` 0.x line now has a visible successor, which is exactly when an unbounded `>=` stops being free.
-
-### Notes
-
-- **No version bump.** A packaging constraint only: no engine, scanner, parser, runner, grading, retry, URL-normalization, report-format or CLI-flag change, and no behaviour change at any currently-installed version. It will fold into the next tagged release.
-- **A stale version string corrected.** `README.md`'s credits footer read `Url Reporter v1.0.4` while its header already said v1.0.5; it now reads v1.0.5. The version is documented as living in three places, but each README's footer is an unnamed fourth occurrence — which is why it drifted.
-- **The web surface took two further bounds** that do not apply here, since this package ships no `fastapi` or `starlette`: `fastapi>=0.110,<1` and `starlette>=0.46,<2`. See [CHANGELOG_WEB.md](./CHANGELOG_WEB.md).
-
 ## [1.0.5] - 2026-09-16
 
 ### Fixed (the published CLI package could not import — plus eight engine defects)
@@ -48,12 +35,20 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - **`ScanResult.link` reached an `href` without a scheme check** (`report.py`). A `javascript:` value would have rendered as a live link in the `--html` report — a file people open and forward. Not reachable today (every scanner builds `link` from a constant plus a validated host), but it is the same defence `registration._safe_http_url` already applies to RDAP URLs. Legitimate links and the link-out "Open external scan ↗" anchor are unaffected.
 
-### Changed
+### Changed (dependency ceiling)
+
+- **`httpx` is now capped at `>=0.27,<1`.** CI resolves dependencies fresh on every run against unbounded `>=` specifiers, so a major release upstream becomes a red build with no commit of ours involved. Every one of the twelve scanners is built on `httpx` directly — `AsyncClient`, `Headers`, the `RequestError`/`HTTPStatusError` taxonomy that `scanners/_retry.py` branches on — and `respx`, which the test suite mocks with, pins to `httpx` as well, so a major migration would not be a one-line change. The installed 0.28.1 satisfies the bound; nothing else changes.
+- **Why now.** `httpx2` is real and already published at 2.13.0, and Starlette 1.0 has begun deprecating `httpx` in favour of it. That transition does not touch this package — the CLI tree ships no web framework — but it does mean the `httpx` 0.x line now has a visible successor, which is exactly when an unbounded `>=` stops being free.
+
+### Changed (two scanners now score some sites differently)
 
 - **`caa` and `dos_posture` now score some sites differently.** Both are corrections, but grades produced before and after this release are not directly comparable.
 
 ### Notes
 
+- **A stale version string corrected.** `README.md`'s credits footer read `Url Reporter v1.0.4` while its header already said v1.0.5; it now reads v1.0.5. The version is documented as living in three places, but each README's footer is an unnamed further occurrence — which is why it drifted.
+- **The web surface took two further bounds** that do not apply here, since this package ships no `fastapi` or `starlette`: `fastapi>=0.110,<1` and `starlette>=0.46,<2`. See [CHANGELOG_WEB.md](./CHANGELOG_WEB.md).
+- **Packaging and docs only.** The ceiling and footer fix landed after the 1.0.5 tag was pushed and are recorded here rather than under a version of their own: no engine, scanner, parser, runner, grading, retry, URL-normalization, report-format or CLI-flag change.
 - **Every fix carries a regression test verified to fail against the unfixed code** — the source file was reverted, the test run, the failure confirmed, then restored. The suite grew from 121 tests to 134.
 - **CLI-surface scope.** Three fixes in this release touch only the web surface and are therefore absent from this package: the `POST /scan` concurrency cap, the result-page behaviour when `reports/` is unwritable, and the `safe_link` filter in `templates/result.html`. All are recorded in [CHANGELOG_WEB.md](./CHANGELOG_WEB.md).
 - **No CLI flag, exit code, config key, or report format changed.** `scan`, `explain-score`, `--config`, `--out`, `--only`, `--quiet`, `--html` and exit codes `0`/`1`/`2`/`130` are unchanged.
