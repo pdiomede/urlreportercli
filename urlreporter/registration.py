@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from . import publicsuffix
 from .scanners._retry import RetryExhausted, describe_exc, retry_request
 
 log = logging.getLogger(__name__)
@@ -297,23 +298,15 @@ def _parse_rdap(domain: str, data: dict[str, Any]) -> RegistrationInfo:
 
 
 def _registrable_domain(host: str) -> str | None:
-    """Best-effort registrable-domain extraction without a public-suffix list.
+    """The domain to run RDAP against.
 
-    Returns the last two labels (e.g. example.com from www.example.com).
-    Domains under multi-label public suffixes (.co.uk, .com.br) will be
-    truncated incorrectly here; the RDAP query will simply return 404 in
-    those cases and the caller treats that as 'no data'.
+    Previously "the last two labels", which under a multi-label public suffix
+    asked the registry about itself — `www.example.co.uk` queried `co.uk`.
+    That failed benignly here (404, treated as no data), but the same rule
+    lived in the CAA and email-auth parent walks where it did not, so all
+    three now share one definition in `publicsuffix`.
     """
-    if not host:
-        return None
-    labels = host.split(".")
-    if len(labels) < 2:
-        return None
-    if all(p.isdigit() for p in labels):
-        return None
-    if ":" in host:
-        return None
-    return ".".join(labels[-2:]).lower()
+    return publicsuffix.registrable_domain(host or "")
 
 
 async def fetch_registration(

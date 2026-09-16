@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from .. import publicsuffix
 from ._retry import RetryExhausted, describe_exc, retry_request
 from .base import Finding, ScanResult
 
@@ -18,13 +19,14 @@ _GENERIC_RR_RE = re.compile(r"^\\#\s+(\d+)\s+([0-9a-fA-F\s]+)$")
 
 
 def _parent_domains(host: str) -> list[str]:
-    """Return host plus its parent labels, e.g. a.b.c -> [a.b.c, b.c]. CAA RR is
-    inherited from the closest ancestor that has one, so we walk up."""
-    parts = host.split(".")
-    out = []
-    for i in range(len(parts) - 1):
-        out.append(".".join(parts[i:]))
-    return out
+    """Host plus its parents, stopping at the registrable domain.
+
+    CAA is inherited from the closest ancestor that publishes it, so we walk
+    up — but only as far as the apex. The old last-two-labels rule walked
+    *into* multi-label public suffixes, so a `.co.uk` domain would have been
+    credited with whatever CAA policy the registry publishes on `co.uk`.
+    """
+    return publicsuffix.parent_domains(host)
 
 
 def _decode_caa(rdata: str) -> tuple[int, str, str] | None:

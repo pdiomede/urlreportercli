@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from .. import publicsuffix
 from ._retry import RetryExhausted, describe_exc, retry_request
 from .base import Finding, ScanResult
 
@@ -32,15 +33,17 @@ def _strip_quotes(s: str) -> str:
 
 
 def _parent_domains(host: str) -> list[str]:
-    """Return host plus its parent labels, e.g. a.b.c -> [a.b.c, b.c]. SPF/DMARC
-    are typically published at the registered domain (apex), not on every
-    subdomain - so for accurate detection on a webapp host like app.aave.com we
-    walk up to find records at the closest ancestor that has them."""
-    parts = host.split(".")
-    out: list[str] = []
-    for i in range(len(parts) - 1):
-        out.append(".".join(parts[i:]))
-    return out or [host]
+    """Host plus its parents, stopping at the registrable domain.
+
+    SPF/DMARC live at the apex rather than on every subdomain, so scanning
+    `app.example.com` has to walk up to find them. The old last-two-labels
+    rule walked one step too far under a multi-label public suffix: at the
+    time of writing `co.za` publishes both MX and SPF, so `example.co.za`
+    inherited the registry's SPF as if it were its own — scoring for email
+    authentication it had never configured — and `co.za`'s MX suppressed the
+    "not a mail-sending host" link-out that should have applied.
+    """
+    return publicsuffix.parent_domains(host)
 
 
 async def _doh_answers(client: httpx.AsyncClient, name: str, rrtype: str, *, label: str) -> list[dict]:
