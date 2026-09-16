@@ -204,6 +204,52 @@ def explain_error(result: ScanResult, log_path: str | None = None) -> dict[str, 
     }
 
 
+def _md_code_span(text: str) -> str:
+    """Wrap `text` in a backtick code span that survives backticks inside it.
+
+    CommonMark closes a code span at the first backtick run of the same length,
+    so a URL containing a backtick broke out of the span and took the
+    surrounding link construct with it — the heading rendered with no link at
+    all. The delimiter therefore has to be longer than the longest run in the
+    content, and content that starts or ends with a backtick needs one space of
+    padding (which the renderer strips back off).
+    """
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    fence = "`" * (longest + 1)
+    pad = " " if text.startswith("`") or text.endswith("`") else ""
+    return f"{fence}{pad}{text}{pad}{fence}"
+
+
+# Characters that break a `<...>` markdown link destination, and the
+# percent-escapes that carry the same meaning to any HTTP client. Backslash
+# escaping is not usable here: CommonMark gives code spans higher precedence
+# than links, so a backtick inside a destination is consumed as a code span
+# before the link is ever parsed — and real renderers disagree about honouring
+# `\<` inside angle brackets anyway. Percent-encoding is unambiguous.
+_MD_DEST_ESCAPES = (
+    ("<", "%3C"),
+    (">", "%3E"),
+    ("`", "%60"),
+    ("\\", "%5C"),
+    (" ", "%20"),
+)
+
+
+def _md_destination(url: str) -> str:
+    """Render `url` as a `<...>`-delimited markdown link destination.
+
+    Angle brackets are what let a URL carrying parentheses work as a
+    destination, but the destination ends at the first `>` — so a URL with a
+    literal `>` truncated the link and leaked the rest into the document as
+    text, and one with a backtick produced no link at all. Only the handful of
+    genuinely unusable characters are encoded; existing `%XX` escapes in the
+    URL are left alone rather than double-encoded.
+    """
+    for char, escape in _MD_DEST_ESCAPES:
+        url = url.replace(char, escape)
+    return f"<{url}>"
+
+
 def _esc(value: object) -> str:
     return _html.escape("" if value is None else str(value), quote=True)
 
@@ -614,8 +660,12 @@ def render_summary(report: Report, log_path: str | None = None) -> str:
 def render_markdown(report: Report, log_path: str | None = None) -> str:
     out: list[str] = []
     # Backtick-wrap the URL so markdown renderers don't treat `_`, `*`, `~`,
-    # `[` inside the URL as inline formatting in the heading.
-    out.append(f"# Security report: <small>[`{report.url}`](<{report.url}>)</small>")
+    # `[` inside the URL as inline formatting in the heading. Both halves need
+    # escaping of their own: see _md_code_span and _md_destination.
+    out.append(
+        f"# Security report: <small>"
+        f"[{_md_code_span(report.url)}]({_md_destination(report.url)})</small>"
+    )
     out.append("")
     out.append(f"_Generated {_format_timestamp(report.generated_at)} by [Url Reporter](https://urlreporter.com/)_")
     out.append("")
