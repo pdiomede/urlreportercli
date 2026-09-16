@@ -140,10 +140,58 @@ class SSLLabsScanner:
                 error="SSL Labs returned no grades.",
                 link=link,
             )
-        worst = min(grades, key=lambda g: letter_to_score(g) or 0)
-        score = letter_to_score(worst)
+        # Rank only the grades we can actually interpret. The old key was
+        # `letter_to_score(g) or 0`, which collapsed two different things into
+        # zero: a genuine F, and a grade absent from LETTER_TO_SCORE. An
+        # unrecognised grade therefore sorted as the *worst* endpoint, won the
+        # `min`, and was handed to `letter_to_score` again for the score —
+        # returning None. One odd endpoint could both hijack the verdict and
+        # silently drop this weight-2.0 scanner out of the overall average
+        # (aggregate_score skips `score is None`), with no error shown anywhere.
+        ranked = [(g, letter_to_score(g)) for g in grades]
+        known = [(g, sc) for g, sc in ranked if sc is not None]
+        unknown = sorted({g for g, sc in ranked if sc is None})
+
+        if not known:
+            # Nothing interpretable. Degrade to a link-out rather than invent a
+            # number — the same shape the deadline-expiry path above uses, and
+            # honest about the fact that the assessment itself succeeded.
+            return ScanResult(
+                scanner=self.name,
+                ok=True,
+                grade=None,
+                score=None,
+                summary=(
+                    f"SSL Labs returned {'a grade' if len(unknown) == 1 else 'grades'} "
+                    f"this build does not recognise ({', '.join(unknown)}). "
+                    "Open the link for the full assessment."
+                ),
+                findings=[Finding(
+                    severity="info",
+                    title=f"Unrecognised SSL Labs grade: {', '.join(unknown)}",
+                    detail=(
+                        "The endpoint(s) were assessed successfully, but the grade is not "
+                        "one this build knows how to score, so it is excluded from the "
+                        "overall average rather than guessed at."
+                    ),
+                    recommendation="Open the SSL Labs report and read the grade directly.",
+                )],
+                link=link,
+            )
+
+        worst, score = min(known, key=lambda pair: pair[1])
 
         findings: list[Finding] = []
+        if unknown:
+            findings.append(Finding(
+                severity="info",
+                title=f"Unrecognised SSL Labs grade on {len(unknown)} endpoint(s): {', '.join(unknown)}",
+                detail=(
+                    f"Graded on the {len(known)} endpoint(s) with a known grade; the "
+                    "unrecognised one(s) are neither counted nor assumed to be bad."
+                ),
+                recommendation="Open the SSL Labs report to see those endpoints in full.",
+            ))
         for ep in endpoints:
             ip = ep.get("ipAddress", "?")
             grade = ep.get("grade")

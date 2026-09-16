@@ -7,7 +7,7 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [1.0.5] - 2026-09-16
 
-### Fixed (the published CLI package could not import — plus eight engine defects)
+### Fixed (the published CLI package could not import — plus nine engine defects)
 
 - **`urlreporter` was unusable when installed from this repo.** `urlreporter/registration.py` was added to the package but never added to the `ALLOWLIST` in the mirror script that builds this repo, so the published tree shipped a `runner.py` whose `from .registration import RegistrationInfo, fetch_registration` had no target. Every invocation died before parsing a single argument:
 
@@ -34,6 +34,7 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - **`--out report.html --html` silently destroyed the markdown report** (`cli.py`). `out_path.with_suffix(".html")` collapsed onto `out_path`, so the HTML renderer overwrote the markdown and the CLI still printed both success lines. The path you name now keeps the markdown; the HTML goes to `<stem>.report.html`.
 
 - **`ScanResult.link` reached an `href` without a scheme check** (`report.py`). A `javascript:` value would have rendered as a live link in the `--html` report — a file people open and forward. Not reachable today (every scanner builds `link` from a constant plus a validated host), but it is the same defence `registration._safe_http_url` already applies to RDAP URLs. Legitimate links and the link-out "Open external scan ↗" anchor are unaffected.
+- **An unrecognised SSL Labs grade hijacked the verdict and voided the score** (`ssllabs.py:143`). The ranking key was `min(grades, key=lambda g: letter_to_score(g) or 0)`, which collapsed two different things into zero: a genuine `F`, and a grade absent from `LETTER_TO_SCORE`. An unrecognised grade therefore tied with `F`, won the `min()`, and was then passed back to `letter_to_score` for the score — returning `None`. So a single odd endpoint could both decide the verdict for an otherwise healthy host *and* silently drop this **weight-2.0** scanner out of the overall average, since `aggregate_score` skips `score is None` — with no error surfaced anywhere. Now ranks only interpretable grades, reports the worst *known* one, and names any it could not read in a finding. When nothing is interpretable it degrades to a link-out rather than inventing a number, matching the deadline-expiry path in the same scanner. All ten grades SSL Labs v3 documents are in the table, so this was latent rather than live — it is fixed because the failure mode is silent, and a scanner that quietly removes itself from the average is the worst kind to leave armed.
 
 ### Changed (dependency ceiling)
 
@@ -49,7 +50,7 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - **A stale version string corrected.** `README.md`'s credits footer read `Url Reporter v1.0.4` while its header already said v1.0.5; it now reads v1.0.5. The version is documented as living in three places, but each README's footer is an unnamed further occurrence — which is why it drifted.
 - **The web surface took two further bounds** that do not apply here, since this package ships no `fastapi` or `starlette`: `fastapi>=0.110,<1` and `starlette>=0.46,<2`. See [CHANGELOG_WEB.md](./CHANGELOG_WEB.md).
 - **Packaging and docs only.** The ceiling and footer fix landed after the 1.0.5 tag was pushed and are recorded here rather than under a version of their own: no engine, scanner, parser, runner, grading, retry, URL-normalization, report-format or CLI-flag change.
-- **Every fix carries a regression test verified to fail against the unfixed code** — the source file was reverted, the test run, the failure confirmed, then restored. The suite grew from 121 tests to 134.
+- **Every fix carries a regression test verified to fail against the unfixed code** — the source file was reverted, the test run, the failure confirmed, then restored. The suite grew from 121 tests to 137.
 - **CLI-surface scope.** Three fixes in this release touch only the web surface and are therefore absent from this package: the `POST /scan` concurrency cap, the result-page behaviour when `reports/` is unwritable, and the `safe_link` filter in `templates/result.html`. All are recorded in [CHANGELOG_WEB.md](./CHANGELOG_WEB.md).
 - **No CLI flag, exit code, config key, or report format changed.** `scan`, `explain-score`, `--config`, `--out`, `--only`, `--quiet`, `--html` and exit codes `0`/`1`/`2`/`130` are unchanged.
 
