@@ -45,6 +45,25 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - **CLI-surface scope.** Three fixes in this release touch only the web surface and are therefore absent from this package: the `POST /scan` concurrency cap, the result-page behaviour when `reports/` is unwritable, and the `safe_link` filter in `templates/result.html`. All are recorded in [CHANGELOG_WEB.md](./CHANGELOG_WEB.md).
 - **No CLI flag, exit code, config key, or report format changed.** `scan`, `explain-score`, `--config`, `--out`, `--only`, `--quiet`, `--html` and exit codes `0`/`1`/`2`/`130` are unchanged.
 
+## [1.0.4] - 2026-08-23
+
+Backfilled. This release was tagged and shipped at the time — `pyproject.toml` and
+`urlreporter/__init__.py` went to 1.0.4 — but no entry was written here, so the log
+jumped 1.0.3 → 1.0.5. Reconstructed from the release commit rather than from memory.
+
+### Changed (README is now CLI-only, not a shared document)
+
+- **`README.md` restructured — 143 lines touched, +89/-60.** It had been describing both surfaces from inside the CLI package. The **`Web UI`** and **`Architecture`** sections were dropped, **`CLI`** became **`Usage`**, **`Reports`** moved up above configuration, and a new **`How it works`** section replaced the architecture prose. Nine lines referencing the web surface (urlreporter.com, the browser UI, `runUrlReporter.sh`, `/stats`, templates) went with them. The web repo keeps the equivalent content in `README_WEB.md`.
+
+### Removed (a web-only setting that never applied here)
+
+- **`STATS_HIDE_HOSTNAMES` dropped from `config.env.example`.** It gates hostname display on the web surface's `/stats` operator dashboard, which this package does not ship — `web.py` and `templates/` are not part of the CLI tree. Documenting it here only invited someone to set a key nothing in this package reads. `config.py` still recognises it, so a value inherited from a shared `config.env` is parsed and ignored exactly as before; no behaviour changed.
+
+### Notes
+
+- **No engine, scanner, parser, runner, grading, retry, URL-normalization, or CLI-flag change** between v1.0.3 and v1.0.4. The release touched exactly four files: `README.md`, `config.env.example`, `pyproject.toml`, and `urlreporter/__init__.py` (version string only). Every scanner module, `runner.py`, `report.py`, `grading.py`, `urlutil.py` and `cli.py` are byte-identical across the two tags.
+- **The corresponding web release was large.** v1.0.4 split the one-page landing site into six routes with shared Jinja chrome — `index.html` went from 1,960 lines to 79, and `static/site.css` / `static/chrome.css` were carved out of its inline `<style>`. None of it reaches this package. See [CHANGELOG_WEB.md](./CHANGELOG_WEB.md).
+
 ## [1.0.3] - 2026-05-26
 
 ### Removed (Google Analytics)
