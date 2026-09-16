@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from .. import publicsuffix
 from ._retry import RetryExhausted, describe_exc, retry_request
 from .base import Finding, ScanResult
 
@@ -34,6 +35,30 @@ class DNSSECScanner:
                 link=DOH_URL,
             )
         link = REPORT_URL.format(host=host)
+
+        if publicsuffix.is_ip_literal(host):
+            # A DoH SOA query for "1.1.1.1" returns NXDOMAIN, which this scanner
+            # rendered as "The domain does not exist. Check spelling and
+            # registration status" — advice about a misspelled domain, for a
+            # target that is not a domain. DNSSEC signs zones, and an IP literal
+            # has none.
+            return ScanResult(
+                scanner=self.name, ok=True, grade=None, score=None,
+                summary=(
+                    f"Skipped: {host} is an IP address, so there is no DNS zone "
+                    "to be signed."
+                ),
+                findings=[Finding(
+                    severity="info",
+                    title=f"DNSSEC not applicable to {host}",
+                    detail=(
+                        "DNSSEC signs a DNS zone. A target reached by IP address is "
+                        "not resolved through one, so this scanner is excluded from "
+                        "the overall score rather than reported as a lookup failure."
+                    ),
+                )],
+                link=link,
+            )
 
         try:
             resp = await retry_request(

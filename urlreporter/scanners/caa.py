@@ -19,14 +19,21 @@ _GENERIC_RR_RE = re.compile(r"^\\#\s+(\d+)\s+([0-9a-fA-F\s]+)$")
 
 
 def _parent_domains(host: str) -> list[str]:
-    """Host plus its parents, stopping at the registrable domain.
+    """Host plus every ancestor — CAA climbs past the public suffix on purpose.
 
-    CAA is inherited from the closest ancestor that publishes it, so we walk
-    up — but only as far as the apex. The old last-two-labels rule walked
-    *into* multi-label public suffixes, so a `.co.uk` domain would have been
-    credited with whatever CAA policy the registry publishes on `co.uk`.
+    RFC 8659 §3 defines the relevant CAA RRset by walking `domain ->
+    Parent(domain)` toward the root, and it does **not** exclude public
+    suffixes. A CAA record on `vercel.app` really does constrain issuance for
+    `myapp.vercel.app`; one on `co.uk` really does constrain `example.co.uk`.
+
+    This is why CAA uses `ancestor_domains` while `email_auth` uses
+    `parent_domains`: DMARC stops at the Organizational Domain (RFC 7489
+    §6.6.3, defined via a public suffix list) and SPF does not climb at all,
+    but CAA does. Briefly giving CAA the DMARC boundary made it report "No CAA
+    records on this domain or any ancestor" for hosts whose issuance *is*
+    restricted — false, and false in the reassuring direction.
     """
-    return publicsuffix.parent_domains(host)
+    return publicsuffix.ancestor_domains(host)
 
 
 def _decode_caa(rdata: str) -> tuple[int, str, str] | None:
@@ -88,25 +95,25 @@ class CAAScanner:
             )
         link = REPORT_URL.format(host=host)
 
-        if not _parent_domains(host):
-            # No registrable domain: an IP literal, or a bare public suffix.
-            # CAA is published against a domain name, so there is nothing to
-            # check — reporting "No CAA records" with a D/40 stated a finding
-            # about a name that cannot have one, and fed it into the average.
+        if publicsuffix.is_ip_literal(host):
+            # CAA is published against a DNS name; an IP literal has none, so
+            # there is nothing to check. Reporting "No CAA records" with a D/40
+            # stated a finding about a name that cannot have one, and fed that
+            # grade into the average.
             return ScanResult(
                 scanner=self.name, ok=True, grade=None, score=None,
                 summary=(
-                    f"Skipped: {host} has no registrable domain, so CAA does "
-                    "not apply to it."
+                    f"Skipped: {host} is an IP address, so CAA does not apply "
+                    "to it."
                 ),
                 findings=[Finding(
                     severity="info",
                     title=f"CAA not applicable to {host}",
                     detail=(
                         "CAA records are published against a domain name. An IP "
-                        "address or a bare public suffix has no owner to publish "
-                        "them, so this scanner is excluded from the overall score "
-                        "rather than graded as if the records were missing."
+                        "address has none, so this scanner is excluded from the "
+                        "overall score rather than graded as if the records were "
+                        "missing."
                     ),
                 )],
                 link=link,
@@ -215,6 +222,22 @@ class CAAScanner:
             grade, score = "C", 65
             summary = f"{len(records)} CAA record(s) on {matched_at} (no recognized directives)."
 
+        apex = publicsuffix.registrable_domain(host)
+        if matched_at and apex and matched_at != host and len(matched_at.split(".")) < len(apex.split(".")):
+            # The match is above the registrable domain, i.e. on a registry or
+            # hosting platform. The protection is real (RFC 8659 climbs there),
+            # but it is not this domain owner's doing and they cannot change it.
+            findings.append(Finding(
+                severity="info",
+                title=f"CAA policy is inherited from {matched_at}, not set on {host}",
+                detail=(
+                    f"{matched_at} is a public suffix or hosting platform, so this "
+                    f"policy covers every name under it and is outside your control. "
+                    f"It does restrict issuance for {host}, but publishing your own "
+                    f"CAA on a domain you control is what pins issuance to your CAs."
+                ),
+                recommendation=None,
+            ))
         findings.append(Finding(
             severity="info",
             title=f"CAA records (matched at {matched_at})",

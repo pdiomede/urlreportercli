@@ -182,3 +182,46 @@ def parent_domains(host: str) -> list[str]:
     labels = cleaned.split(".")
     depth = len(labels) - len(apex.split("."))
     return [".".join(labels[i:]) for i in range(depth + 1)]
+
+def is_ip_literal(host: str) -> bool:
+    """True when `host` is an IP address rather than a DNS name.
+
+    Several scanners check properties that are defined *against a name* — CAA,
+    SPF/DMARC/DKIM, HSTS preload, DNSSEC. None of them can exist for an IP
+    literal, so grading one produces a number about a question that was never
+    asked.
+    """
+    import ipaddress
+
+    cleaned = host.strip().strip(".")
+    if not cleaned:
+        return False
+    try:
+        ipaddress.ip_address(cleaned)
+    except ValueError:
+        return False
+    return True
+
+
+def ancestor_domains(host: str) -> list[str]:
+    """`host` and every parent down to the two-label boundary, closest first.
+
+    This is **not** `parent_domains`, and the difference is deliberate — the
+    three protocols that climb the DNS tree do not climb the same distance:
+
+      * **SPF** (RFC 7208) does not climb at all.
+      * **DMARC** (RFC 7489 §6.6.3) falls back to the Organizational Domain,
+        which is defined *using a public suffix list*. It stops at the apex.
+      * **CAA** (RFC 8659 §3) climbs `domain -> Parent(domain)` toward the root
+        and does **not** exclude public suffixes.
+
+    So a CAA record on `vercel.app` genuinely constrains issuance for
+    `myapp.vercel.app`, and one on `co.uk` genuinely constrains issuance for
+    `example.co.uk`. Applying the DMARC boundary to CAA makes the scanner
+    report "no CAA records on this domain or any ancestor" about a host whose
+    issuance *is* restricted — false, and in the reassuring direction.
+    """
+    if is_ip_literal(host):
+        return []
+    labels = host.lower().strip(".").split(".")
+    return [".".join(labels[i:]) for i in range(max(len(labels) - 1, 1))]

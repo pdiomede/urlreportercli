@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from .. import publicsuffix
 from ._retry import RetryExhausted, describe_exc, retry_request
 from .base import Finding, ScanResult
 
@@ -28,6 +29,30 @@ class HSTSPreloadScanner:
                 link="https://hstspreload.org/",
             )
         link = REPORT_URL.format(host=host)
+
+        if publicsuffix.is_ip_literal(host):
+            # RFC 6797 §8.1.1: a user agent MUST NOT apply HSTS to a host
+            # identified by an IP address, and the preload list only ever holds
+            # names. So the answer is not "this domain is not preloaded" — the
+            # question does not apply. Grading it B+/80 put a number about an
+            # unasked question into the weighted average.
+            return ScanResult(
+                scanner=self.name, ok=True, grade=None, score=None,
+                summary=(
+                    f"Skipped: {host} is an IP address. HSTS is never applied "
+                    "to IP-literal hosts (RFC 6797 §8.1.1)."
+                ),
+                findings=[Finding(
+                    severity="info",
+                    title=f"HSTS preload not applicable to {host}",
+                    detail=(
+                        "The preload list contains domain names only, and browsers "
+                        "do not apply HSTS to a host reached by IP address. Excluded "
+                        "from the overall score rather than graded as un-preloaded."
+                    ),
+                )],
+                link="https://hstspreload.org/",
+            )
 
         try:
             resp = await retry_request(
