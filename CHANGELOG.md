@@ -7,7 +7,7 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [1.0.5] - 2026-09-16
 
-### Fixed (the published CLI package could not import — plus twenty-five engine defects)
+### Fixed (the published CLI package could not import — plus twenty-six engine defects)
 
 - **`urlreporter` was unusable when installed from this repo.** `urlreporter/registration.py` was added to the package but never added to the `ALLOWLIST` in the mirror script that builds this repo, so the published tree shipped a `runner.py` whose `from .registration import RegistrationInfo, fetch_registration` had no target. Every invocation died before parsing a single argument:
 
@@ -51,6 +51,7 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - **`public_suffix` returned a confident wrong answer for IP literals** (`publicsuffix.py`). `1.1.1.1` gave `"1"` and `2001:db8::1` gave itself, because the PSL reads an address as a domain name. It also disagreed with `registrable_domain`, which already returned None for the same input — two functions in one module answering the same question differently. Now returns `""`.
 - **Malformed names were expanded into queries that cannot resolve** (`publicsuffix.py`). `ancestor_domains("")` returned `[""]`, and `ancestor_domains("a..b.com")` returned `['a..b.com', '.b.com', 'b.com']` — names with empty labels, sent to the resolver. `normalize_url` rejects these at the boundary so they should never arrive, but these helpers are called directly and should not manufacture nonsense when they do.
 - **Four entry points normalised their input separately** (`publicsuffix.py`). Each repeated `host.lower().strip().strip(".")`, which is how the IP guard ended up on three of them and not the fourth. One `_clean` helper now, so they cannot drift again.
+- **A rate-limited RDAP registry cost 31 seconds of every scan** (`registration.py`, `runner.py`). Two compounding problems, both found by reading production logs after deploy. First, `_retry.py` lists 429 as a transient status, so an RDAP 429 — which means *you are over quota*, not *try again shortly* — walked the full 3 + 8 + 20 second backoff ladder and failed anyway. Second, `run_scans` awaits the registration task between the last scanner and the `done` event, so that time landed directly on the user's clock. A production scan of a `.uk` domain reported **32s** when every scanner had finished by **10.3s**; the rest was RDAP retrying a rate limit it could not satisfy. Nominet has been 429-ing the production IP since 2026-08-25, so this was live for three weeks. RDAP now makes a single attempt (`backoffs=()`) and the wait is bounded by `REGISTRATION_TIMEOUT_SECONDS = 5.0`. Measured: the rate-limited path went from 31s to **0.03s**, and a healthy lookup still returns the card in 0.7s. The registration card is informational and every renderer already treats it as optional, so a slow registry now costs its own section rather than the whole scan.
 
 ### Changed (dependency ceiling)
 

@@ -344,6 +344,14 @@ async def fetch_registration(
                 headers={"Accept": "application/rdap+json"},
             ),
             label="rdap", logger=log,
+            # No retries. A 429 from an RDAP registry means "you are over
+            # quota", not "try again in three seconds" — the default ladder
+            # slept 3 + 8 + 20 = 31s and then failed anyway. In production
+            # Nominet rate-limits our server IP, so every .uk scan paid the
+            # full 31s for a lookup that could not succeed. One attempt: it
+            # either answers or the registration card is simply absent, which
+            # is what this function already degrades to.
+            backoffs=(),
         )
     except RetryExhausted as e:
         log.warning("RDAP query failed for %s: %s", domain, e)

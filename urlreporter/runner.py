@@ -19,6 +19,10 @@ from .scanners.base import Finding, ScanResult, SEVERITY_ORDER
 ProgressCallback = Callable[[dict], Awaitable[None] | None]
 RequestHook = Callable[[httpx.Request], Awaitable[None]]
 
+# Ceiling on the RDAP lookup, which is awaited after the scanners and before
+# the 'done' event — every second of it is a second the user waits.
+REGISTRATION_TIMEOUT_SECONDS = 5.0
+
 
 @dataclass
 class Report:
@@ -176,8 +180,24 @@ async def run_scans(
 
             # Drain the registration task while the client is still open; it must
             # never raise — fetch_registration swallows its own errors.
+            #
+            # Bounded, because this await sits between the last scanner and the
+            # 'done' event, so whatever it costs lands directly on the user's
+            # clock. A production scan of a .uk domain reported 32s when every
+            # scanner had finished by 10.3s: the rest was RDAP. The card is
+            # informational and the renderers already treat it as optional, so
+            # a slow registry costs its own section, never the whole scan.
             try:
-                registration = await registration_task
+                registration = await asyncio.wait_for(
+                    registration_task, timeout=REGISTRATION_TIMEOUT_SECONDS
+                )
+            except asyncio.TimeoutError:
+                if logger is not None:
+                    logger.warning(
+                        "Registration lookup exceeded %.0fs; continuing without it",
+                        REGISTRATION_TIMEOUT_SECONDS,
+                    )
+                registration = None
             except Exception:  # noqa: BLE001
                 if logger is not None:
                     logger.exception("Registration fetch raised unexpectedly")
