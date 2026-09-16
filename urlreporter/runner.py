@@ -225,11 +225,27 @@ async def run_scans(
 
 
 def _prioritize(results: list[ScanResult]) -> list[tuple[Finding, str]]:
-    """Flatten findings, sort by severity then scanner, dedupe by lowercased title."""
+    """Flatten findings, sort by severity then scanner, dedupe by lowercased title.
+
+    Order matters, and this used to do it backwards: it deduped first, in
+    scanner-registration order, then sorted. Because dedupe keeps the *first*
+    occurrence, the survivor of a duplicated title was whichever scanner
+    happened to sit earlier in REGISTRY — so a `critical` reported by a later
+    scanner was discarded in favour of a `low` with the same title, and the
+    "Top recommendations" list silently understated the problem. Sorting first
+    makes the survivor the most severe occurrence, which is what the docstring
+    has always claimed and what a prioritised list is for.
+
+    With no duplicate titles the two orders produce identical output, so this
+    changes nothing for the scanners as they stand today — no two of them
+    currently emit the same title. It matters the moment one does.
+    """
     flat: list[tuple[Finding, str]] = []
     for r in results:
         for f in r.findings:
             flat.append((f, r.scanner))
+
+    flat.sort(key=lambda pair: (SEVERITY_ORDER.get(pair[0].severity, 99), pair[1]))
 
     seen: set[str] = set()
     unique: list[tuple[Finding, str]] = []
@@ -240,5 +256,4 @@ def _prioritize(results: list[ScanResult]) -> list[tuple[Finding, str]]:
         seen.add(key)
         unique.append((f, scanner))
 
-    unique.sort(key=lambda pair: (SEVERITY_ORDER.get(pair[0].severity, 99), pair[1]))
     return unique
