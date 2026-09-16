@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -18,6 +19,39 @@ IANA_BOOTSTRAP_URL = "https://data.iana.org/rdap/dns.json"
 
 _bootstrap: dict[str, str] | None = None
 _bootstrap_lock = asyncio.Lock()
+
+# Per-domain RDAP cache: {domain: (result, expires_at_monotonic)}.
+#
+# Registration data changes on the order of once a year, so re-querying a
+# registry on every scan is pure waste — and not harmless waste: Nominet has
+# been rate-limiting the production IP with HTTP 429 since 2026-08-25, which
+# is exactly what repeated unnecessary lookups earn you.
+#
+# Failures are cached too, for much less time. A negative entry is what stops
+# a rate-limited registry being hammered once per scan; a short TTL is what
+# stops one transient blip hiding the registration card for a day.
+#
+# Bounded on purpose. An unbounded dict keyed by a user-supplied domain is a
+# slow memory leak on a public service — the same defect `urlutil._DNS_CACHE`
+# carried until it was fixed.
+_RDAP_CACHE: dict[str, tuple["RegistrationInfo | None", float]] = {}
+_RDAP_TTL_SECONDS = 24 * 60 * 60   # a successful lookup
+_RDAP_NEGATIVE_TTL_SECONDS = 600   # a failed one
+_RDAP_CACHE_MAX = 512
+
+
+def _prune_rdap_cache(now: float) -> None:
+    """Drop expired entries once the cache crosses its soft cap, so the common
+    path stays a single dict lookup."""
+    if len(_RDAP_CACHE) < _RDAP_CACHE_MAX:
+        return
+    for key in [k for k, (_, expiry) in _RDAP_CACHE.items() if expiry <= now]:
+        _RDAP_CACHE.pop(key, None)
+    if len(_RDAP_CACHE) >= _RDAP_CACHE_MAX:
+        # Everything still live (a burst of distinct domains inside one TTL).
+        # Evict oldest-expiring first rather than grow without limit.
+        for key in sorted(_RDAP_CACHE, key=lambda k: _RDAP_CACHE[k][1])[: _RDAP_CACHE_MAX // 2]:
+            _RDAP_CACHE.pop(key, None)
 
 
 @dataclass
@@ -312,18 +346,33 @@ def _registrable_domain(host: str) -> str | None:
 async def fetch_registration(
     url: str, client: httpx.AsyncClient
 ) -> RegistrationInfo | None:
-    """Fetch RDAP registration metadata for the URL's domain.
+    """Fetch RDAP registration metadata for the URL's domain, via a cache.
 
     Returns None on any failure (unsupported TLD, network error, parse
     error, IP target, 404). Logs warnings but never raises to the caller —
     the registration card is purely informational and must not block or
     fail the scan.
     """
-    host = urlparse(url).hostname
-    domain = _registrable_domain(host or "")
+    domain = _registrable_domain(urlparse(url).hostname or "")
     if domain is None:
         return None
 
+    now = time.monotonic()
+    cached = _RDAP_CACHE.get(domain)
+    if cached is not None and cached[1] > now:
+        return cached[0]
+
+    result = await _fetch_registration_uncached(domain, client)
+    ttl = _RDAP_TTL_SECONDS if result is not None else _RDAP_NEGATIVE_TTL_SECONDS
+    _prune_rdap_cache(now)
+    _RDAP_CACHE[domain] = (result, now + ttl)
+    return result
+
+
+async def _fetch_registration_uncached(
+    domain: str, client: httpx.AsyncClient
+) -> RegistrationInfo | None:
+    """One RDAP round trip for an already-extracted registrable domain."""
     bootstrap = await _get_bootstrap(client)
     if not bootstrap:
         return None
