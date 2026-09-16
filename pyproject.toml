@@ -17,6 +17,9 @@ dependencies = [
     "httpx>=0.27,<1",
     "click>=8.1",
     "python-dotenv>=1.0",
+    # Public Suffix List (data bundled). caa, email_auth and registration all
+    # ship in this tree and all need the same ownership boundary.
+    "publicsuffixlist>=1.0.2,<2",  # version tail is the PSL snapshot date
 ]
 
 [project.optional-dependencies]
