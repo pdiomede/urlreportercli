@@ -40,8 +40,8 @@ through 1.0.11 without CLI-facing changes. This is the first CLI release since
 
 ### Changed
 
-- **`config.env` and `config.env.example` carry a `GA_MEASUREMENT_ID` key.**
-  It configures analytics for the web app; the CLI loads it and ignores it.
+- **`config.env.example` carries a `GA_MEASUREMENT_ID` key.** It configures
+  analytics for the web app; the CLI loads it and ignores it.
 
 ## [1.0.5] - 2026-09-16
 
