@@ -1,6 +1,6 @@
 # Url Reporter
 
-> Current version: **v1.0.5**. See [CHANGELOG.md](./CHANGELOG.md) for release notes.
+> Current version: **v1.0.12**. See [CHANGELOG.md](./CHANGELOG.md) for release notes.
 
 A command-line tool that aggregates twelve public security scanners into one report for any URL.
 
@@ -203,7 +203,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/). All changes a
 
 ## Credits
 
-Url Reporter v1.0.5, made by [Paolo Diomede](https://pdiomede.com).
+Url Reporter v1.0.12, made by [Paolo Diomede](https://pdiomede.com).
 
 ## License
 

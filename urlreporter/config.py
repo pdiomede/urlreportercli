@@ -15,6 +15,7 @@ class Config:
     user_agent: str
     internetnl_api_token: str | None
     stats_hide_hostnames: bool
+    ga_measurement_id: str
     source_files: list[Path]
 
 
@@ -42,6 +43,7 @@ _RECOGNIZED_KEYS: tuple[str, ...] = (
     "HTTP_USER_AGENT",
     "INTERNETNL_API_TOKEN",
     "STATS_HIDE_HOSTNAMES",
+    "GA_MEASUREMENT_ID",
 )
 
 
@@ -110,5 +112,6 @@ def load_config(config_path: Path | None = None) -> Config:
         user_agent=merged.get("HTTP_USER_AGENT") or "urlreporter/0.1",
         internetnl_api_token=token,
         stats_hide_hostnames=_as_bool(merged.get("STATS_HIDE_HOSTNAMES"), False),
+        ga_measurement_id=(merged.get("GA_MEASUREMENT_ID") or "").strip(),
         source_files=used,
     )

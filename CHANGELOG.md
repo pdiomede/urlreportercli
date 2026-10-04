@@ -5,6 +5,44 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.12] - 2026-10-05
+
+The CLI shares its version number with the web app, which released 1.0.6
+through 1.0.11 without CLI-facing changes. This is the first CLI release since
+1.0.5, so the number jumps.
+
+### Fixed
+
+- **A domain that had just enabled DNSSEC was told to enable DNSSEC.** The
+  DNSSEC scanner graded on the AD flag from Cloudflare's resolver alone, and a
+  resolver that cached a zone before its DS record reached the parent keeps
+  serving those answers as unsigned until they expire. For up to an hour, a
+  correctly signed zone scored D with "Enable DNSSEC at your registrar".
+
+  An unauthenticated answer is now checked, in parallel and best effort,
+  against Google's resolver (`https://dns.google/resolve`) and the parent
+  zone's DS record:
+
+  | Google | DS at parent | Result |
+  | --- | --- | --- |
+  | validates | — | **A+**, with an info note that Cloudflare disagreed |
+  | SERVFAIL | published | **F**: the DS record matches no DNSKEY |
+  | not validated, host is a CNAME out of the zone | published | **D**: the alias points into an unsigned zone |
+  | not validated | published | **D**, "enabled but not validating yet" |
+  | not validated | absent | **D**, "not enabled", unchanged |
+
+  This also fixes zones that Cloudflare's resolver never marks as validated:
+  `cdc.gov` has been signed for years and scored D; it now scores A+. A failed
+  extra lookup falls back to the previous verdict rather than erroring.
+
+  Scanning a domain now sends its hostname to Google's public resolver when
+  Cloudflare's answer is unvalidated.
+
+### Changed
+
+- **`config.env` and `config.env.example` carry a `GA_MEASUREMENT_ID` key.**
+  It configures analytics for the web app; the CLI loads it and ignores it.
+
 ## [1.0.5] - 2026-09-16
 
 ### Fixed (the published CLI package could not import — plus twenty-seven engine defects)
