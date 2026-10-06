@@ -1,58 +1,43 @@
 # Security policy
 
-Url Reporter is a free, passive website security scanner, run by Paolo Diomede. It lives at
-[urlreporter.com](https://urlreporter.com), with its source in
-[pdiomede/urlreporter](https://github.com/pdiomede/urlreporter) (the web app) and
-[pdiomede/urlreportercli](https://github.com/pdiomede/urlreportercli) (the command-line tool).
+Found a security problem in Url Reporter? Please report it privately. Thank you.
 
-If you have found a security problem in any of them, thank you. Please report it privately, as
-described below, rather than in a public GitHub issue.
+## How to report
 
-## Reporting a vulnerability
+Email **security@pdiomede.com**, in English or Italian, with:
 
-Email **security@pdiomede.com** with:
+- what is affected: a URL, a file, or a command
+- how to reproduce it
+- the impact you think it has
 
-- what is affected: a URL, a file in one of the repositories, or a command;
-- the steps to reproduce it, and what you expected to happen instead;
-- the impact you think it has.
+Please don't open a public GitHub issue.
 
-English or Italian is fine.
+## In scope
 
-## Scope
+- [urlreporter.com](https://urlreporter.com) and its subdomains
+- the urlreporter.com web app (its source is private)
+- [pdiomede/urlreportercli](https://github.com/pdiomede/urlreportercli), the command-line tool
 
-In scope:
+## Out of scope
 
-- urlreporter.com and its subdomains
-- github.com/pdiomede/urlreporter
-- github.com/pdiomede/urlreportercli
-
-Out of scope:
-
-- the third-party scanners Url Reporter queries (SSL Labs, Mozilla Observatory,
-  securityheaders.com, hstspreload.org, crt.sh, CertSpotter, RIPEstat, Cloudflare DNS and others)
-  and the results they return; please report those to their operators;
-- denial-of-service or load testing of urlreporter.com;
-- social engineering, phishing, or physical attacks;
-- reports produced only by an automated tool, without a demonstrated impact.
+- The third-party scanners Url Reporter queries (SSL Labs, Mozilla Observatory, crt.sh, RIPEstat
+  and the rest) and their results. Please report those to their operators.
+- Denial-of-service or load testing
+- Social engineering, phishing or physical attacks
+- Output from automated tools without a demonstrated impact
 
 ## What to expect
 
-- An acknowledgement within **5 working days**.
-- Updates while the report is investigated, until it is fixed or closed.
-- Credit in the release notes once it is fixed, if you would like it.
-
-There is no bug bounty.
-
-Fixes go into the current version of urlreporter.com and the latest release of the CLI; older
-releases are not patched.
+- An acknowledgement within **5 working days**
+- Updates until the report is fixed or closed
+- Credit in the release notes, if you want it
+- No bug bounty
+- Fixes go into the live site and the latest CLI release only
 
 ## Safe harbour
 
-Research done in good faith and within this policy will not be pursued legally. Good faith here
-means that you:
+Good-faith research that follows this policy won't be pursued legally. Good faith means:
 
-- test without degrading the service for others: no denial-of-service, and no bulk scanning
-  beyond what you need to show the problem;
-- do not access, change or delete data that isn't yours, such as the scan reports of other
-  visitors, and stop as soon as you reach any;
-- give a reasonable time for a fix before disclosing the problem publicly.
+- No harm to the service: no denial-of-service, and no more scanning than the report needs.
+- No access to data that isn't yours, such as other visitors' scan reports. Stop if you reach any.
+- A reasonable time to fix before you disclose publicly.
