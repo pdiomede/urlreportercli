@@ -7,6 +7,18 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Changed
+
+- **The User-Agent follows the release.** Requests said `urlreporter/0.1`,
+  pinned in `config.env`. They now say `urlreporter/<version>
+  (+https://urlreporter.com)` unless `HTTP_USER_AGENT` overrides it.
+
+### Removed
+
+- **The `INTERNETNL_API_TOKEN` setting.** It never did anything: internet.nl's
+  batch API terms rule out single-site scans, so internet.nl is always a
+  link-out. A leftover line in a config file is ignored.
+
 ## [1.1.1] - 2026-10-06
 
 A patch release of fixes found reviewing 1.1.0, mostly in the Markdown and

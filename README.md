@@ -159,9 +159,7 @@ SCANNER_RPKI=true
 
 SCAN_TIMEOUT_SECONDS=180
 SSL_LABS_USE_CACHE=true
-HTTP_USER_AGENT=urlreporter/0.1
-
-INTERNETNL_API_TOKEN=
+# HTTP_USER_AGENT is optional; it defaults to urlreporter/<version> (+https://urlreporter.com)
 ```
 
 Booleans accept `1` / `true` / `yes` / `on`. Copy `config.env.example` to `config.env.local` for

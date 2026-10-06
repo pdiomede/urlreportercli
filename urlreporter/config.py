@@ -6,6 +6,13 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 
+from . import __version__
+
+# Sent with every outbound request, to the services queried and to the sites
+# scanned: names the tool, its version and where to find out more. It said
+# "urlreporter/0.1" through every release up to 1.1.1.
+DEFAULT_USER_AGENT = f"urlreporter/{__version__} (+https://urlreporter.com)"
+
 
 @dataclass
 class Config:
@@ -13,7 +20,6 @@ class Config:
     timeout_seconds: int
     ssl_labs_use_cache: bool
     user_agent: str
-    internetnl_api_token: str | None
     stats_hide_hostnames: bool
     ga_measurement_id: str
     source_files: list[Path]
@@ -42,7 +48,6 @@ _RECOGNIZED_KEYS: tuple[str, ...] = (
     "SCAN_TIMEOUT_SECONDS",
     "SSL_LABS_USE_CACHE",
     "HTTP_USER_AGENT",
-    "INTERNETNL_API_TOKEN",
     "STATS_HIDE_HOSTNAMES",
     "GA_MEASUREMENT_ID",
 )
@@ -104,15 +109,11 @@ def load_config(config_path: Path | None = None) -> Config:
     if timeout < 10:
         timeout = 10
 
-    raw_token = (merged.get("INTERNETNL_API_TOKEN") or "").strip()
-    token = raw_token or None
-
     return Config(
         enabled=enabled,
         timeout_seconds=timeout,
         ssl_labs_use_cache=_as_bool(merged.get("SSL_LABS_USE_CACHE"), True),
-        user_agent=merged.get("HTTP_USER_AGENT") or "urlreporter/0.1",
-        internetnl_api_token=token,
+        user_agent=(merged.get("HTTP_USER_AGENT") or "").strip() or DEFAULT_USER_AGENT,
         stats_hide_hostnames=_as_bool(merged.get("STATS_HIDE_HOSTNAMES"), False),
         ga_measurement_id=(merged.get("GA_MEASUREMENT_ID") or "").strip(),
         source_files=used,

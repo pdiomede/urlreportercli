@@ -18,15 +18,13 @@ class InternetNLScanner:
     Its only API is a batch API whose terms forbid this use three ways:
     single-domain requests are not allowed, it may not back a public
     third-party front-end, and fair use caps it at 2 batches a week (research
-    and clauses in NEXT_SCANNER.md). So no token can turn this into a scan;
-    the result points the reader at internet.nl's own test instead.
+    and clauses in NEXT_SCANNER.md). So no token can turn this into a scan,
+    and the INTERNETNL_API_TOKEN setting that suggested one could was
+    removed; the result points the reader at internet.nl's own test instead.
     """
 
     name = "internet.nl"
     config_key = "internetnl"
-
-    def __init__(self, *, api_token: str | None = None) -> None:
-        self.api_token = api_token
 
     async def scan(self, url: str, *, client: httpx.AsyncClient) -> ScanResult:
         host = urlparse(url).hostname
@@ -39,27 +37,10 @@ class InternetNLScanner:
             )
         link = REPORT_URL.format(host=host)
 
-        # A configured token is ignored, and said so: an operator who set one
-        # must not assume it is in use. Visitors never set it, so the plain
-        # summary doesn't mention it. It used to say "no INTERNETNL_API_TOKEN
-        # configured (batch API requires registration)", which told every web
-        # visitor about a server setting and implied registering would help.
-        if self.api_token:
-            log.warning(
-                "%s: INTERNETNL_API_TOKEN is set but ignored: internet.nl's batch API "
-                "terms rule out single-site scans for a public front-end "
-                "(see NEXT_SCANNER.md); using the manual link-out",
-                self.name,
-            )
-            summary = (
-                "Link-out: INTERNETNL_API_TOKEN is set but not used, because "
-                "internet.nl's batch API terms rule out single-site scans."
-            )
-        else:
-            summary = (
-                "Link-out: internet.nl offers no API for single-site scans. "
-                "Open the link to run its test."
-            )
+        summary = (
+            "Link-out: internet.nl offers no API for single-site scans. "
+            "Open the link to run its test."
+        )
 
         return ScanResult(
             scanner=self.name,

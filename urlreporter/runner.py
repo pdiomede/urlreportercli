@@ -49,8 +49,6 @@ def _build_scanners(cfg: Config) -> list:
             continue
         if key == "ssl_labs":
             scanners.append(cls(use_cache=cfg.ssl_labs_use_cache, timeout_seconds=cfg.timeout_seconds))
-        elif key == "internetnl":
-            scanners.append(cls(api_token=cfg.internetnl_api_token))
         else:
             scanners.append(cls())
     return scanners
