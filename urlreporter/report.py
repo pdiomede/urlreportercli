@@ -94,8 +94,10 @@ def _explain_http_status(result: ScanResult, status: int, log_path: str | None =
                     "This scanner contacts your target site directly. Several scanners "
                     "run in parallel and a few of them hit your origin within milliseconds, "
                     "which can trip Cloudflare/WAF rate limits. Every retry got the same 429. "
-                    "Re-run after a minute, or scan with --only / fewer checkboxes to reduce "
-                    "concurrent hits."
+                    # --only is a CLI flag; the web form has no scanner picker,
+                    # and web visitors were told to use "fewer checkboxes".
+                    + ("Re-run after a minute, or scan with --only to send fewer requests at once."
+                       if log_path else "Re-run the scan after a minute.")
                 ),
             }
         return {
@@ -280,8 +282,9 @@ def explain_error(result: ScanResult, log_path: str | None = None) -> dict[str, 
             "body": (
                 "This scanner uses Cloudflare's public DoH endpoint "
                 "(https://cloudflare-dns.com/dns-query) to resolve DNS records. "
-                "The lookups failed at the network layer on every retry. Re-run "
-                "when your network reaches Cloudflare again."
+                "The lookups failed at the network layer on every retry. "
+                + ("Re-run when your network reaches Cloudflare again." if log_path
+                   else "That is on Url Reporter's side, not your site's: re-run the scan in a few minutes.")
             ),
         }
 
@@ -323,8 +326,11 @@ def explain_error(result: ScanResult, log_path: str | None = None) -> dict[str, 
             "title": "Could not connect to your target",
             "body": (
                 "DNS lookup or TCP connection to the host failed on every retry. "
-                "Verify the URL works in a browser from this machine, and that no "
-                "firewall is blocking outbound TLS to the target."
+                # On the web, "this machine" was the server, not the reader's.
+                + ("Verify the URL works in a browser from this machine, and that no "
+                   "firewall is blocking outbound TLS to the target." if log_path
+                   else "Check that the site loads in a browser and that its hostname resolves "
+                   "in public DNS: a site reachable only on a private network can't be scanned from here.")
             ),
         }
 
@@ -1036,6 +1042,12 @@ h2 {
 }
 @media (max-width: 480px) {
   .reg-grid-row1, .reg-grid-row2 { grid-template-columns: 1fr; }
+}
+/* At 375px the scanner table was ~450px wide and the whole report scrolled
+   sideways; long names, summaries and error text now wrap instead. */
+@media (max-width: 600px) {
+  th, td { padding-left: 10px; padding-right: 10px; }
+  td { overflow-wrap: anywhere; }
 }
 .reg-cell {
   border-left: 2px solid var(--border-strong);

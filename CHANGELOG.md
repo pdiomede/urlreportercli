@@ -16,6 +16,9 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- **The HTML report scrolled sideways on a phone.** At 375px its scanner
+  table was about 450px wide; long names, summaries and error text now wrap
+  on narrow screens.
 - **crt.sh mis-graded healthy sites and counted one CA as several.**
   - A site with no certificate issued in the last 90 days got a C with no
     finding, which is normal for a one-year certificate more than 90 days
