@@ -7,6 +7,11 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-10-06
+
+A small release: requests carry the current version in their User-Agent, and
+an unused setting is gone.
+
 ### Changed
 
 - **The User-Agent follows the release.** Requests said `urlreporter/0.1`,
