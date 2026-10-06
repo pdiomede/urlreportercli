@@ -53,7 +53,11 @@ _SEVERITY_PENALTY: dict[str, int] = {"high": 25, "medium": 15, "low": 5}
 
 
 class SecurityHeadersScanner:
-    name = "securityheaders.com"
+    # Named for what it checks, not for securityheaders.com: that site now
+    # refuses automated requests, so this row is almost always our own
+    # grading of the headers, with securityheaders.com kept as the link for a
+    # manual check. /stats maps the old name onto this one.
+    name = "Security headers"
     config_key = "security_headers"
 
     async def scan(self, url: str, *, client: httpx.AsyncClient) -> ScanResult:

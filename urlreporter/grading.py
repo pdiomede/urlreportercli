@@ -87,7 +87,7 @@ SCANNER_WEIGHTS: dict[str, float] = {
     "DNSSEC": 2.0,
     "Email auth (SPF/DMARC/DKIM)": 2.0,
     "HTTP→HTTPS redirect": 1.5,
-    "securityheaders.com": 1.5,
+    "Security headers": 1.5,
     "CAA records": 1.0,
     "DoS posture": 1.0,
     "HSTS Preload": 1.0,

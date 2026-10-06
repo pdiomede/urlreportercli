@@ -7,12 +7,26 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-10-06
+
+A patch release of fixes found reviewing 1.1.0, mostly in the Markdown and
+HTML reports, crt.sh's fallback and the RPKI and security.txt checks. One
+visible change: the securityheaders.com row is now called "Security headers".
+
 ### Added
 
 - **`SECURITY.md`**: how to report a vulnerability privately
   (security@pdiomede.com), what is in scope, what to expect, the
   safe-harbour terms, and an Acknowledgments section for the people who
   report issues. Linked from the README.
+
+### Changed
+
+- **The securityheaders.com row is now called "Security headers".**
+  securityheaders.com refuses automated requests, so the row was in practice
+  Url Reporter's own grading of the headers under another site's name. It
+  keeps its 1.5 weight and still links to securityheaders.com for a manual
+  check. `--only security_headers` is unchanged.
 
 ### Fixed
 

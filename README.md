@@ -1,6 +1,6 @@
 # Url Reporter
 
-> Current version: **v1.1.0**. See [CHANGELOG.md](./CHANGELOG.md) for release notes.
+> Current version: **v1.1.1**. See [CHANGELOG.md](./CHANGELOG.md) for release notes.
 
 A command-line tool that aggregates thirteen public security scanners into one report for any URL.
 
@@ -34,7 +34,7 @@ By default `urlreporter` queries:
 |---|---|---|
 | 1 | [SSL Labs](https://www.ssllabs.com/ssltest/) | TLS / certificate configuration (letter grade). Polls; can take 1-3 minutes on a cache miss. |
 | 2 | [Mozilla Observatory v2](https://developer.mozilla.org/en-US/observatory) | HTTP headers and best practices (score + grade). |
-| 3 | [securityheaders.com](https://securityheaders.com/) | HTTP security headers (letter grade). The site now blocks automated requests, so Url Reporter usually grades the target's headers itself, and the summary says why. |
+| 3 | Security headers (links to [securityheaders.com](https://securityheaders.com/)) | HTTP security headers, graded with a letter. securityheaders.com blocks automated requests, so Url Reporter grades the headers itself and links there for a manual check. |
 | 4 | [internet.nl](https://internet.nl/) | Web standards: TLS, DNSSEC, IPv6, mail. Always a **link-out**: its only API is a batch API whose terms rule out single-site scans for a tool like this. |
 | 5 | [hstspreload.org](https://hstspreload.org/) | Whether the scanned hostname is on the Chrome HSTS preload list. |
 | 6 | [crt.sh](https://crt.sh/) + [CertSpotter](https://sslmate.com/certspotter/) | Certificate Transparency: how many CAs (counted per organisation) issued certificates in the last 90 days, or the still-valid ones if none were. CertSpotter is the fallback when crt.sh fails or stalls. If both are down, the row is a link-out. |
@@ -180,7 +180,7 @@ Each scanner returns a number from 0 to 100. The overall number is a **weighted*
 scanner that returned one. Three weight tiers:
 
 - **Weight 2.0** - real cryptographic / authentication posture: SSL Labs, Mozilla Observatory, DNSSEC, Email auth (SPF/DMARC/DKIM).
-- **Weight 1.5** - meaningful but narrower: HTTP→HTTPS redirect, securityheaders.com.
+- **Weight 1.5** - meaningful but narrower: HTTP→HTTPS redirect, Security headers.
 - **Weight 1.0** - hardening extras and hygiene markers: CAA, DoS posture, HSTS Preload, security.txt, crt.sh, internet.nl, RPKI.
 
 Link-out results (no score, only a link for a manual check), checks that don't apply to the target
@@ -217,7 +217,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/). All changes a
 
 ## Credits
 
-Url Reporter v1.1.0, made by [Paolo Diomede](https://pdiomede.com).
+Url Reporter v1.1.1, made by [Paolo Diomede](https://pdiomede.com).
 
 ## License
 

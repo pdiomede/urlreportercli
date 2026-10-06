@@ -79,10 +79,10 @@ def _logs_pointer(log_path: str | None, fallback: str) -> str:
 def _hits_target_directly(result: ScanResult) -> bool:
     if result.scanner in _DIRECT_TARGET_SCANNERS:
         return True
-    # securityheaders.com makes two calls: one to securityheaders.com (upstream)
-    # and a fallback fetch of the user's origin. The retry label tells us which
-    # one exhausted.
-    if result.scanner == "securityheaders.com" and result.error and "direct fetch" in result.error:
+    # The security headers check makes two calls: one to securityheaders.com
+    # (upstream) and a fallback fetch of the user's origin. The retry label
+    # tells us which one exhausted.
+    if result.scanner == "Security headers" and result.error and "direct fetch" in result.error:
         return True
     return False
 

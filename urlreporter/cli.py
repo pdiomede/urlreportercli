@@ -58,7 +58,7 @@ than optional hygiene markers:
 
     Weight 2.0   SSL Labs, Mozilla Observatory, DNSSEC,
                  Email auth (SPF/DMARC/DKIM)
-    Weight 1.5   HTTP→HTTPS redirect, securityheaders.com
+    Weight 1.5   HTTP→HTTPS redirect, Security headers
     Weight 1.0   CAA, DoS posture, HSTS Preload, security.txt,
                  crt.sh, internet.nl, RPKI
 
@@ -114,7 +114,7 @@ class _ProgressPrinter:
       [ ] SSL Labs              waiting…
       [-] Mozilla Observatory   running…  3.4s
       [✓] HSTS Preload          done       0.4s   D (40)
-      [x] securityheaders.com   error      1.1s   No X-Grade header
+      [x] Security headers      error      1.1s   No X-Grade header
 
     On terminals (isatty) the block is updated in place using ANSI cursor
     moves. On non-terminals (pipes, file redirects) each event prints a
