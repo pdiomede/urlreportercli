@@ -71,6 +71,12 @@ number.
   added an "Open external scan" link. They now read "not applicable" and are
   counted separately from real link-outs. Grades were not affected.
 - **Several unannounced addresses read as one** ("… is not announced").
+- **Mozilla Observatory showed two scores on one line.** Its score is held
+  inside the band of Mozilla's letter, but the summary still printed Mozilla's
+  raw number unlabelled: "A (89/100) - HTTP best-practice grade A (90/100)".
+  When the two differ the summary now says "Mozilla's score 90, counted as 89
+  here". Mozilla's numbers above 100 had the same problem before 1.1.0
+  ("(115/100)").
 - **An SSL Labs E read back as an F.** The ladder went from D- (35 to 39)
   straight to F, so an E counted as 34 and an SSL Labs E on its own gave an
   overall F. The ladder now has an E rung at 30 to 34 and F starts under 30;

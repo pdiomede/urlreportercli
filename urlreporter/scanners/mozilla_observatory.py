@@ -94,11 +94,19 @@ class MozillaObservatoryScanner:
                 # "A" would read back as our A+.
                 normalized_score = fit_score_to_letter(normalized_score, grade)
 
-        summary = (
-            f"HTTP best-practice grade {grade} ({score}/100)"
-            if grade is not None and score is not None
-            else "Mozilla Observatory result"
-        )
+        # Mozilla's own number goes in the summary, labelled as Mozilla's: it
+        # runs past 100 and is clamped into the letter's band above, so
+        # printing it bare beside the row's score read as two scores for one
+        # result ("A (89/100) - grade A (90/100)").
+        if grade is None:
+            summary = "Mozilla Observatory result"
+        elif score is None or score == normalized_score:
+            summary = f"HTTP best-practice grade {grade}" + (f" ({score}/100)" if score is not None else "")
+        else:
+            summary = (
+                f"HTTP best-practice grade {grade} "
+                f"(Mozilla's score {score}, counted as {normalized_score} here)"
+            )
 
         return ScanResult(
             scanner=self.name,
