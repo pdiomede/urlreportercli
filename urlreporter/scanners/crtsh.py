@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote, urlparse
@@ -25,6 +26,42 @@ CERTSPOTTER_API = (
 )
 
 LOOKBACK_DAYS = 90
+
+# crt.sh gets one quick retry, not the default three with 3/8/20s backoff:
+# there is a fallback, and when crt.sh is down it is usually down for hours
+# (502s on every request, its own web page included, all of 6 Oct 2026).
+# The default schedule cost every scan ~45s before CertSpotter was asked.
+CRTSH_BACKOFFS: tuple[float, ...] = (3.0,)
+CRTSH_TIMEOUT = 20.0
+
+_ORG_RE = re.compile(r'(?:^|,\s*)O=(?:"([^"]*)"|([^,]*))')
+
+
+def _issuer_org(name: str) -> str:
+    """The organisation behind an issuer name, so CAs are counted once each.
+
+    crt.sh names the issuing *intermediate* ("C=US, O=Let's Encrypt, CN=R11").
+    Let's Encrypt alone rotates R10, R11, E5 and E6, so counting full names
+    made a Let's Encrypt-only site look like four CAs and cost it the A+.
+    CertSpotter's friendly names are already per organisation and pass
+    through unchanged.
+    """
+    m = _ORG_RE.search(name)
+    if m:
+        org = (m.group(1) if m.group(1) is not None else m.group(2)).strip()
+        if org:
+            return org
+    return name.strip()
+
+
+def _parse_ts(value: Any) -> datetime | None:
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
 class CrtShScanner:
@@ -95,8 +132,9 @@ async def _fetch_crtsh(host: str, client: httpx.AsyncClient) -> list[dict[str, A
     url_to_get = CRTSH_API.format(host=quote(host, safe=""))
     try:
         resp = await retry_request(
-            lambda: client.get(url_to_get, timeout=30.0),
+            lambda: client.get(url_to_get, timeout=CRTSH_TIMEOUT),
             label="crt.sh", logger=log,
+            backoffs=CRTSH_BACKOFFS,
             # crt.sh under load returns 404 for valid queries; retry it.
             treat_404_as_transient=True,
         )
@@ -179,6 +217,7 @@ async def _fetch_certspotter(host: str, client: httpx.AsyncClient) -> list[dict[
         normalized.append({
             "entry_timestamp": not_before,
             "not_before": not_before,
+            "not_after": item.get("not_after"),
             "issuer_name": issuer_name,
         })
     return normalized
@@ -196,27 +235,37 @@ def _grade(
     about provenance. The full upstream-error detail lives in the per-run
     log; the report only needs to know which source was used.
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(days=LOOKBACK_DAYS)
-    recent_certs = []
+    # Grade on certificates issued in the last LOOKBACK_DAYS. When there are
+    # none, grade on those still valid instead: a healthy site on a one-year
+    # certificate issued more than 90 days ago used to get a C with no finding
+    # to say why. Still-valid certificates are only the fallback because the
+    # sample includes subdomains, and counting every long-lived one for a busy
+    # domain (github.com: 5 CAs instead of 2) would change grades that were
+    # right.
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=LOOKBACK_DAYS)
+    recent_certs, valid_certs = [], []
     for c in certs:
-        ts = (c or {}).get("entry_timestamp") or (c or {}).get("not_before")
-        # Upstreams have been known to send a numeric timestamp here. `.replace`
-        # on a non-string raises AttributeError, which the except clause below
-        # does not catch, so one odd record took the whole scanner down instead
-        # of being skipped like any other unparseable date.
-        if not ts or not isinstance(ts, str):
+        if not isinstance(c, dict):
             continue
-        try:
-            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-        except (TypeError, ValueError):
-            continue
-        if dt >= cutoff:
+        # Upstreams have been known to send a numeric timestamp; _parse_ts
+        # skips those rather than taking the scanner down.
+        issued = _parse_ts(c.get("entry_timestamp")) or _parse_ts(c.get("not_before"))
+        expires = _parse_ts(c.get("not_after"))
+        if issued and issued >= cutoff:
             recent_certs.append(c)
+        if expires and expires >= now:
+            valid_certs.append(c)
+    if recent_certs:
+        current_certs, basis = recent_certs, f"in last {LOOKBACK_DAYS}d"
+    else:
+        current_certs, basis = valid_certs, f"still valid (none issued in the last {LOOKBACK_DAYS}d)"
 
-    issuers = sorted({(c.get("issuer_name") or "").strip() for c in recent_certs if c.get("issuer_name")})
-    n_recent = len(recent_certs)
+    issuers = sorted({
+        _issuer_org(c.get("issuer_name") or "")
+        for c in current_certs if (c.get("issuer_name") or "").strip()
+    })
+    n_current = len(current_certs)
     n_total = len(certs)
     n_issuers = len(issuers)
 
@@ -234,30 +283,51 @@ def _grade(
             findings=findings, link=link,
         )
 
-    if n_recent == 0:
+    if n_current == 0:
         grade, score = "C", 59
-        summary = f"{n_total} historical cert(s) but none in the last {LOOKBACK_DAYS} days."
+        summary = f"{n_total} logged cert(s), all expired; none issued in the last {LOOKBACK_DAYS} days."
+        findings.append(Finding(
+            severity="medium",
+            title="No currently valid certificate in CT logs",
+            detail=(
+                f"Every one of the {n_total} logged certificate(s) has expired, and none "
+                f"was issued in the last {LOOKBACK_DAYS} days. Publicly trusted "
+                "certificates have to be logged, so the certificate this site serves "
+                "may not be publicly trusted, or may be issued for a different name."
+            ),
+            recommendation="Check the SSL Labs result for the certificate actually being served.",
+        ))
     elif n_issuers <= 2:
         grade, score = "A+", 100
-        summary = f"{n_recent} cert(s) in last {LOOKBACK_DAYS}d from {n_issuers} CA(s)."
+        summary = f"{n_current} cert(s) {basis} from {n_issuers} CA(s)."
     elif n_issuers <= 4:
         grade, score = "A", 89
-        summary = f"{n_recent} cert(s) in last {LOOKBACK_DAYS}d from {n_issuers} CA(s)."
-    elif n_issuers <= 7:
-        grade, score = "B", 74
-        summary = f"{n_recent} cert(s) in last {LOOKBACK_DAYS}d from {n_issuers} different CAs."
+        summary = f"{n_current} cert(s) {basis} from {n_issuers} CA(s)."
         findings.append(Finding(
             severity="low",
-            title=f"{n_issuers} different CAs issued certs in the last {LOOKBACK_DAYS} days",
+            title=f"{n_issuers} CAs have issued current certificates for this domain",
+            detail=(
+                "Each CA that issues for the domain is one more organisation that could "
+                "mis-issue for it; two or fewer scores A+. Three or four is common when "
+                "a CDN rotates between CAs."
+            ),
+            recommendation="Check that each is a CA you or your CDN use, and list exactly those in a CAA record.",
+        ))
+    elif n_issuers <= 7:
+        grade, score = "B", 74
+        summary = f"{n_current} cert(s) {basis} from {n_issuers} different CAs."
+        findings.append(Finding(
+            severity="low",
+            title=f"{n_issuers} different CAs have issued current certificates",
             detail="A high CA churn can indicate uncoordinated cert provisioning.",
             recommendation="Pin issuance to a small set of CAs via CAA records.",
         ))
     else:
         grade, score = "C", 59
-        summary = f"{n_recent} cert(s) in last {LOOKBACK_DAYS}d from {n_issuers} different CAs."
+        summary = f"{n_current} cert(s) {basis} from {n_issuers} different CAs."
         findings.append(Finding(
             severity="medium",
-            title=f"{n_issuers} different CAs issued certs in the last {LOOKBACK_DAYS} days",
+            title=f"{n_issuers} different CAs have issued current certificates",
             detail="A very high CA spread is unusual and warrants review.",
             recommendation="Audit the CAs in your CAA records and at your registrar.",
         ))
@@ -265,7 +335,7 @@ def _grade(
     if issuers:
         findings.append(Finding(
             severity="info",
-            title=f"Issuing CAs (last {LOOKBACK_DAYS} days)",
+            title="Issuing CAs (current certificates)",
             detail="; ".join(issuers[:10]) + ("…" if len(issuers) > 10 else ""),
             recommendation=None,
         ))

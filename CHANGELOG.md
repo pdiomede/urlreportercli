@@ -9,6 +9,22 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- **crt.sh mis-graded healthy sites and counted one CA as several.**
+  - A site with no certificate issued in the last 90 days got a C with no
+    finding, which is normal for a one-year certificate more than 90 days
+    old. Such a site is now graded on its still-valid certificates; the C is
+    kept only when every logged certificate has expired, with a medium
+    finding saying so.
+  - Issuers were counted by the issuing intermediate's full name, so Let's
+    Encrypt alone (R10, R11, E5, E6) could count as four CAs and cost the
+    A+. They are now counted per organisation. This only showed when crt.sh
+    served the data; CertSpotter already used organisation names.
+  - The A for three or four issuers now has a low finding explaining it.
+- **A failing crt.sh cost every scan about 45 seconds.** crt.sh answered every
+  request with HTTP 502 on 6 Oct 2026, including its own web page, and the
+  scanner went through three retries (3, 8 and 20 seconds of backoff) before
+  asking CertSpotter. It now retries once, after 3 seconds, with a 20-second
+  timeout: the fallback answered in 4 seconds in the same conditions.
 - **"Top recommendations" was mostly confirmations.** Informational findings
   ("SPF policy is hardfail", "RPKI-valid: …") are no longer listed as
   recommendations in the summary or the report files; they stay in each
