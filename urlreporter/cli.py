@@ -35,8 +35,10 @@ return one, and takes a weighted average of the rest.
 
 How letter grades become numbers
 --------------------------------
-Some scanners return a number directly. Others return a letter. The
-letter ones convert via this fixed table, where each letter counts as
+Some of our own checks compute a number directly (DoS posture, email
+auth, security.txt). Others return a letter; Mozilla Observatory returns
+both, and its number is kept inside its letter's band. The letter ones
+convert via this fixed table, where each letter counts as
 the top of its own band on the ladder below:
 
     A+ = 100   B+ = 79    C+ = 64    D+ = 49    E       = 34
@@ -60,8 +62,13 @@ than optional hygiene markers:
     Weight 1.0   CAA, DoS posture, HSTS Preload, security.txt,
                  crt.sh, internet.nl, RPKI
 
-Two kinds are skipped:
-  * Link-out scanners (no API this tool can use; e.g. internet.nl).
+Three kinds are skipped:
+  * Link-out results: no score, only a link to run the check on the
+    service's own site (internet.nl always; SSL Labs or crt.sh when the
+    service can't answer in time).
+  * Checks that don't apply: an IP address has no CAA record, DNS zone or
+    HSTS preload entry, and an unannounced address has no route. These
+    are marked not applicable rather than graded.
   * Failed scanners (timeout, malformed response, rate-limit).
 
 When no scanner returned a number, the report says
@@ -181,7 +188,7 @@ class _ProgressPrinter:
             elif s.get("not_applicable"):
                 extra = "  not applicable"
             else:
-                extra = "  link-out (no public API)"
+                extra = "  link-out (manual check)"
             tail = f"done   {elapsed:>5.1f}s{extra}"
         elif status == "error":
             elapsed = s.get("elapsed") or 0.0

@@ -37,7 +37,7 @@ class ScanResult:
     # The check does not apply to this target (an IP literal has no CAA, an
     # unannounced address has no route). Like a link-out it carries no score,
     # but there is nothing to check by hand either, so it must not be labelled
-    # "link-out (no public API)".
+    # "link-out (manual check)".
     not_applicable: bool = False
 
 

@@ -43,8 +43,8 @@ By default `urlreporter` queries:
 | 9 | HTTP→HTTPS redirect | Calls `http://<host>` and walks the redirect chain; flags missing redirects, intermediate http hops, and cross-host detours. |
 | 10 | DoS posture (passive) | Detects CDN/WAF in front, edge-cacheable responses, and rate-limit headers. **Generates no load**; active load testing is out of scope. |
 | 11 | Email auth (SPF / DMARC / DKIM) | TXT lookups via Cloudflare DoH for SPF on the apex, DMARC on `_dmarc.<host>`, and DKIM probed across 10 common selectors. Scores by policy strictness (`-all` > `~all` > `+all`; `p=reject` > `p=quarantine` > `p=none`). |
-| 12 | security.txt (RFC 9116) | Fetches `/.well-known/security.txt` (then `/security.txt` as legacy fallback), parses it, and grades on canonical-location compliance, `Contact:` presence, and a parseable, future-dated `Expires:` field. |
-| 13 | RPKI route origin (via [RIPEstat](https://stat.ripe.net/)) | Resolves the site's IPv4 and IPv6 addresses through Cloudflare DoH, looks up which prefix and network announce each in BGP, and checks whether a signed ROA authorises that pair. `valid` is A+, no ROA is a B (most address space has none, and it is usually the host's to fix), `invalid` is a critical F. Applies to IP-literal targets too. Every finding names the announcing network. |
+| 12 | security.txt (RFC 9116) | Fetches `/.well-known/security.txt` (then `/security.txt` as legacy fallback), parses it, and grades on canonical-location compliance, `Contact:` presence, and a parseable, future-dated `Expires:` field. The optional `Policy`, `Encryption`, `Acknowledgments` and `Preferred-Languages` fields add a few points each, and a finding names whichever are missing. |
+| 13 | RPKI route origin (via [RIPEstat](https://stat.ripe.net/)) | Resolves the site's IPv4 and IPv6 addresses (every one, up to 8 per family) through Cloudflare DoH, looks up which prefix and network announce each in BGP, and checks whether a signed ROA authorises that pair. `valid` is A+, no ROA is a B (much address space has none, and it is usually the host's to fix), `invalid` is a critical F. Applies to IP-literal targets too. Every finding names the announcing network. |
 
 Failed scanners are isolated: one timing out, erroring, or returning garbage does not stop the
 others. Every outbound HTTP call retries on transient errors (5xx, 429, network timeouts) before
@@ -116,6 +116,9 @@ The `.md` file is re-rendered after every scanner finishes, so it is always curr
 has completed. The `.html` sibling is rendered once at the end — full inline-CSS HTML is too
 expensive to rewrite on every scanner, and nothing reads it mid-scan.
 
+"Top recommendations" lists only findings that need action; informational ones ("SPF policy is
+hardfail") stay in each scanner's own section.
+
 Nothing prunes `./reports/` automatically: the directory is gitignored and grows until you clean it
 up.
 
@@ -180,8 +183,11 @@ scanner that returned one. Three weight tiers:
 - **Weight 1.5** - meaningful but narrower: HTTP→HTTPS redirect, securityheaders.com.
 - **Weight 1.0** - hardening extras and hygiene markers: CAA, DoS posture, HSTS Preload, security.txt, crt.sh, internet.nl, RPKI.
 
-Link-out scanners (no public API) and scanners that errored are skipped, and listed separately in
-the report. The weighted average is rounded to a whole number and mapped to a letter (90 or more is
+Link-out results (no score, only a link for a manual check), checks that don't apply to the target
+(an IP address has no CAA record; an unannounced address has no route), and scanners that errored
+are all skipped, and listed separately in the report. A scanner that returns a letter counts as the
+top of that letter's band (A = 89, B = 74), so every letter reads back as itself; SSL Labs' T
+(untrusted certificate) and M (hostname mismatch) count as 0 and show as F. The weighted average is rounded to a whole number and mapped to a letter (90 or more is
 A+, 85 to 89 is A, and so on down to 30 to 34 is E and under 30 is F).
 
 For the full breakdown — the letter-to-number table, the weight tiers, and the honest caveats about
@@ -197,6 +203,7 @@ urlreporter explain-score
 2. Wrap every HTTP call with `await retry_request(lambda: client.get(...), label=self.name, logger=log)` from `scanners/_retry.py` so retries and logging come for free.
 3. Register it in `urlreporter/scanners/__init__.py` under `REGISTRY`.
 4. Add `SCANNER_<KEY>=true` to `config.env` and a default in `config.py`'s `enabled` dict.
+5. Give it a deliberate weight in `grading.py:SCANNER_WEIGHTS` (otherwise it silently gets 1.0), and if it sets a letter and a score by hand, pick a pair that reads back through `score_to_letter`.
 
 ## Versioning
 

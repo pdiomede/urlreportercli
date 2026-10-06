@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from ..grading import fit_score_to_letter, letter_to_score
+from ..grading import fit_score_to_letter, letter_to_score, score_to_letter
 from ._retry import RetryExhausted, describe_exc, retry_request
 from .base import Finding, ScanResult
 
@@ -83,12 +83,19 @@ class MozillaObservatoryScanner:
             except (httpx.HTTPError, ValueError) as e:
                 log.warning("%s: tests endpoint failed: %s", self.name, describe_exc(e))
 
+        # Mozilla's v2 letters are all on our ladder, but nothing else checks
+        # that: an off-spec "x" or "" went straight to the report beside a
+        # score it doesn't match.
+        if isinstance(grade, str):
+            grade = grade.strip().upper() or None
         normalized_score = score
         if normalized_score is None and grade:
             normalized_score = letter_to_score(grade)
         if isinstance(normalized_score, (int, float)):
             normalized_score = max(0, min(100, int(normalized_score)))
-            if grade:
+            if grade and letter_to_score(grade) is None:
+                grade = score_to_letter(normalized_score)
+            elif grade:
                 # Mozilla's letter is what the reader sees on Mozilla's site,
                 # but its number runs on Mozilla's scale: their 95 beside an
                 # "A" would read back as our A+.

@@ -466,8 +466,10 @@ class EmailAuthScanner:
                 recommendation="Tighten to '-all' once you're confident your sender list is complete.",
             ))
         elif spf_qualifier == "~":
+            # Low, not info: softfail costs 7 of SPF's 35 points, and only
+            # non-info findings reach "Top recommendations".
             findings.append(Finding(
-                severity="info",
+                severity="low",
                 title="SPF policy is softfail (`~all`)" + _at_suffix(spf_at),
                 detail=f"Found: {spf_hits_records[0][:120]}",
                 recommendation="Consider tightening to '-all' (hard fail) for stronger anti-spoofing.",

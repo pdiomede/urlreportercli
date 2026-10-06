@@ -149,6 +149,18 @@ def _explain_http_status(result: ScanResult, status: int, log_path: str | None =
                 "is left out of the overall score. Re-run the scan."
             ),
         }
+    if 400 <= status <= 499 and result.scanner in _PARTLY_DOH_SCANNERS:
+        # RPKI's other calls go to RIPEstat, which never contacts the site, so
+        # the generic "would not scan this particular site" below is wrong.
+        return {
+            "title": f"RIPEstat rejected the routing lookup (HTTP {status})",
+            "body": (
+                "This scanner asks RIPEstat (stat.ripe.net) which network announces "
+                "the site's addresses and whether a ROA covers them. RIPEstat refused "
+                "that query. It never contacts your site, so this says nothing about "
+                "it, and the scanner is left out of the overall score. Re-run the scan."
+            ),
+        }
     if 400 <= status <= 499:
         return {
             "title": f"The scanner service refused this request (HTTP {status})",
@@ -804,7 +816,7 @@ def render_summary(report: Report, log_path: str | None = None) -> str:
         elif r.not_applicable:
             lines.append(f"  - {r.scanner}: not applicable - {r.summary}")
         else:
-            lines.append(f"  - {r.scanner}: link-out (no public API) - {r.summary}")
+            lines.append(f"  - {r.scanner}: link-out (manual check) - {r.summary}")
 
     if report.recommendations:
         lines.append("")
@@ -844,7 +856,7 @@ def render_markdown(report: Report, log_path: str | None = None) -> str:
         if skipped:
             parts.append(
                 f"{len(skipped)} link-out only ({', '.join(r.scanner for r in skipped)}) "
-                f"- no public API; the report points at the external site for a manual check"
+                f"- no score; the report links to each service for a manual check"
             )
         if not_applicable:
             parts.append(
@@ -862,7 +874,12 @@ def render_markdown(report: Report, log_path: str | None = None) -> str:
     out.append("## Top recommendations")
     out.append("")
     if not report.recommendations:
-        out.append("_No actionable findings were surfaced by the scanners._")
+        # Only a clean bill when something actually ran: with every scanner
+        # failed this read as "nothing to fix".
+        if any(r.ok for r in report.results):
+            out.append("_No actionable findings were surfaced by the scanners._")
+        else:
+            out.append("_No scanner completed, so there are no findings to act on._")
     else:
         for i, (finding, source) in enumerate(report.recommendations, start=1):
             line = f"{i}. **[{finding.severity}]** {finding.title} - *{source}*"
@@ -1421,7 +1438,7 @@ def render_html(report: Report, log_path: str | None = None) -> str:
         if skipped:
             bits.append(
                 f"{len(skipped)} link-out only ({', '.join(_esc(r.scanner) for r in skipped)}) "
-                f"- no public API; the report points at the external site for a manual check"
+                f"- no score; the report links to each service for a manual check"
             )
         if not_applicable:
             bits.append(
@@ -1459,6 +1476,18 @@ def render_html(report: Report, log_path: str | None = None) -> str:
                 parts.append(f"<div class='rec'>{_linkify_html(finding.detail)}</div>")
             parts.append("</li>")
         parts.append("</ol></section>")
+    else:
+        # Informational findings no longer count as recommendations, so a
+        # well-configured site can have none; say so rather than drop the
+        # section, matching the Markdown report.
+        parts.append("<section class='recommendations'>")
+        parts.append("<p class='section-eyebrow'>// recommended actions</p>")
+        parts.append("<h2>Top recommendations</h2>")
+        if any(r.ok for r in report.results):
+            parts.append("<p>No actionable findings were surfaced by the scanners.</p>")
+        else:
+            parts.append("<p>No scanner completed, so there are no findings to act on.</p>")
+        parts.append("</section>")
 
     # Per-scanner table
     parts.append("<section>")

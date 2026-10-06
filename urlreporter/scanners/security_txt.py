@@ -14,6 +14,18 @@ from .base import Finding, ScanResult
 
 log = logging.getLogger(__name__)
 
+# Optional RFC 9116 fields: (field, display name, points, what it is for).
+# Scoring and the "missing optional fields" finding both read this, so a file
+# that loses points always says which fields cost them. They used to be
+# scored silently: urlreporter.com's own file graded A at 88, with "Contact
+# channel(s) advertised: 1" as its only finding.
+_OPTIONAL_FIELDS: tuple[tuple[str, str, int, str], ...] = (
+    ("policy", "Policy", 5, "a link to your vulnerability disclosure policy"),
+    ("encryption", "Encryption", 4, "a key researchers can use to encrypt a report"),
+    ("acknowledgments", "Acknowledgments", 3, "a page thanking people who reported issues"),
+    ("preferred-languages", "Preferred-Languages", 3, "the languages you read reports in"),
+)
+
 
 def _authority(host: str) -> str:
     """Host as it must appear in a URL: IPv6 literals need their brackets back.
@@ -204,10 +216,7 @@ class SecurityTxtScanner:
         contacts = fields.get("contact", [])
         expires_raw = (fields.get("expires") or [None])[0]
         canonical = fields.get("canonical", [])
-        policy = fields.get("policy", [])
-        encryption = fields.get("encryption", [])
-        ack = fields.get("acknowledgments", [])
-        prefs = fields.get("preferred-languages", [])
+        missing_optional = [f for f in _OPTIONAL_FIELDS if not fields.get(f[0])]
 
         # Score
         score = 0
@@ -225,10 +234,7 @@ class SecurityTxtScanner:
                 score += 25
             else:
                 score += 5       # present but expired: weak credit
-        if policy: score += 5
-        if encryption: score += 4
-        if ack: score += 3
-        if prefs: score += 3
+        score += sum(points for key, _, points, _ in _OPTIONAL_FIELDS if fields.get(key))
 
         grade = score_to_letter(score)
 
@@ -291,6 +297,27 @@ class SecurityTxtScanner:
                 severity="info",
                 title=f"Unknown field(s) in security.txt: {', '.join(unknown_fields)}",
                 detail="Not part of RFC 9116. Probably harmless but worth checking for typos.",
+            ))
+
+        if missing_optional:
+            lost = sum(points for _, _, points, _ in missing_optional)
+            findings.append(Finding(
+                severity="low",
+                title=(
+                    "Optional security.txt field(s) missing: "
+                    + ", ".join(name for _, name, _, _ in missing_optional)
+                ),
+                detail=(
+                    f"RFC 9116 makes these optional; together they cost {lost} points here. "
+                    + " ".join(
+                        f"{name} (+{points}): {purpose}."
+                        for _, name, points, purpose in missing_optional
+                    )
+                ),
+                recommendation=(
+                    "Add the ones that apply, e.g. `Policy: https://example.com/security-policy`. "
+                    "Leave out any you can't back up: an Encryption line needs a real key."
+                ),
             ))
 
         bits = []

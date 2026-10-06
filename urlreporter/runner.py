@@ -261,10 +261,17 @@ def _prioritize(results: list[ScanResult]) -> list[tuple[Finding, str]]:
     With no duplicate titles the two orders produce identical output, so this
     changes nothing for the scanners as they stand today — no two of them
     currently emit the same title. It matters the moment one does.
+
+    Informational findings are left out. They confirm what is already right
+    ("SPF policy is hardfail", "RPKI-valid: …"), so on a well-run site the
+    list was eleven confirmations under one real item, all headed "Top
+    recommendations". They stay in each scanner's own section.
     """
     flat: list[tuple[Finding, str]] = []
     for r in results:
         for f in r.findings:
+            if f.severity == "info":
+                continue
             flat.append((f, r.scanner))
 
     flat.sort(key=lambda pair: (SEVERITY_ORDER.get(pair[0].severity, 99), pair[1]))

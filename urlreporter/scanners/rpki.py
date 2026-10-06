@@ -141,6 +141,13 @@ class RPKIScanner:
         except _LookupError as e:
             return ScanResult(scanner=self.name, ok=False, error=str(e), link=link)
 
+        # Said on every path that checked addresses, the skipped one included:
+        # an address past the cap might be the one that is announced.
+        unchecked = (
+            f" Checked {len(addresses)} of the {total} addresses {host} resolves to."
+            if total > len(addresses) else ""
+        )
+
         if not routes:
             one = len(unrouted) == 1
             return ScanResult(
@@ -148,7 +155,7 @@ class RPKIScanner:
                 summary=(
                     f"Skipped: {', '.join(unrouted)} {'is' if one else 'are'} not "
                     "announced in public BGP, so there is no route to validate."
-                ),
+                ) + unchecked,
                 findings=[Finding(
                     severity="info",
                     title=f"{'Address' if one else 'Addresses'} not visible in public BGP",
@@ -163,10 +170,7 @@ class RPKIScanner:
             )
 
         result = self._grade(routes, unrouted, link)
-        if total > len(addresses):
-            result.summary += (
-                f" Checked {len(addresses)} of the {total} addresses {host} resolves to."
-            )
+        result.summary += unchecked
         return result
 
     async def _resolve(self, host: str, client: httpx.AsyncClient) -> tuple[list[str], int]:
@@ -291,7 +295,8 @@ class RPKIScanner:
             except _LookupError as e:
                 log.warning("%s: no holder name for AS%s (%s)", self.name, asn, e)
                 return None
-            return (data.get("holder") or "").strip() or None
+            holder = data.get("holder")
+            return holder.strip() or None if isinstance(holder, str) else None
 
         names = dict(zip(asns, await _gather(*(holder(a) for a in asns))))
         for r in routes:
@@ -356,7 +361,9 @@ class RPKIScanner:
                 by_network.setdefault(_who(r), []).append(r.prefix)
             findings.append(Finding(
                 severity="info",
-                title=f"RPKI-valid: {', '.join(r.prefix for r in valid)}",
+                # dict.fromkeys: a prefix announced by two networks (MOAS) is
+                # two routes but one prefix, and was listed twice.
+                title=f"RPKI-valid: {', '.join(dict.fromkeys(r.prefix for r in valid))}",
                 detail=" ".join(
                     f"A signed ROA authorises {who} to announce {', '.join(prefixes)}."
                     for who, prefixes in by_network.items()

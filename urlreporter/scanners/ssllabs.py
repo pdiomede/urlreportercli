@@ -111,8 +111,8 @@ class SSLLabsScanner:
                     # would have returned `status=ERROR` if it found a problem.
                     # We just ran out of time. Degrade to a link-out result
                     # (ok=True, score=None) so the row drops out of the red
-                    # ERROR bucket and into the same "no public API" bucket
-                    # InternetNL and the crt.sh double-fail use. Already
+                    # ERROR bucket and into the same link-out bucket
+                    # internet.nl and the crt.sh double-fail use. Already
                     # excluded from the weighted average via aggregate_score's
                     # `score is not None` filter; the user clicks the link to
                     # watch the assessment finish on ssllabs.com directly.

@@ -222,6 +222,15 @@ class CAAScanner:
         else:
             grade, score = "C", 59
             summary = f"{len(records)} CAA record(s) on {matched_at} (no recognized directives)."
+            # Without this the C was explained only by an info finding, which
+            # "Top recommendations" leaves out: a C beside "No actionable
+            # findings".
+            findings.append(Finding(
+                severity="medium",
+                title="CAA present but does not restrict issuance",
+                detail="No `issue` or `issuewild` directive was recognised, so any CA can still issue.",
+                recommendation="Add an 'issue' directive naming the CA(s) you use.",
+            ))
 
         apex = publicsuffix.registrable_domain(host)
         if matched_at and apex and matched_at != host and len(matched_at.split(".")) < len(apex.split(".")):

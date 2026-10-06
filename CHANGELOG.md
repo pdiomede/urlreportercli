@@ -5,6 +5,41 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **"Top recommendations" was mostly confirmations.** Informational findings
+  ("SPF policy is hardfail", "RPKI-valid: …") are no longer listed as
+  recommendations in the summary or the report files; they stay in each
+  scanner's own section. A site with nothing to act on is told so, but only
+  when a scanner completed: if every scanner failed, the report says so
+  instead. SPF softfail (`~all`, 7 points) is now low severity rather than
+  informational, and a CAA record with no `issue` directive (graded C) gets a
+  medium finding, so neither drops out of the list.
+- **security.txt lost points without saying why.** The optional Policy (+5),
+  Encryption (+4) and Acknowledgments (+3) fields were scored silently; a new
+  low-severity finding names whichever are missing.
+- **Link-outs were described as having "no public API".** The progress line,
+  the summary and the report files now say "link-out (manual check)": every
+  service that produces one has an API, it just can't be used for this scan.
+- **`urlreporter explain-score` no longer matched the code.** It used Mozilla
+  Observatory as the example of a score used directly (it is kept inside its
+  letter's band) and listed two kinds of skipped result; checks marked not
+  applicable are a third.
+- **A RIPEstat refusal was explained as the site refusing to be scanned.** It
+  now says RIPEstat rejected the routing lookup, which says nothing about the
+  site.
+- **RPKI: two smaller fixes.** The "Checked N of the M addresses" note now
+  also appears when every checked address was unannounced, and a prefix
+  announced by two networks is no longer listed twice.
+- **Two defensive fixes for responses the services don't send today:** an
+  off-spec Observatory letter is normalised or replaced with the letter its
+  score reads as, and a non-text RIPEstat network name no longer fails the
+  RPKI scan.
+- The README's RPKI row said routes with no ROA are "most" of the internet;
+  RPKI coverage passed half of routes around 2024, so it now says "much".
+
 ## [1.1.0] - 2026-10-06
 
 The CLI shares its version number with the web app, which released 1.0.14
@@ -17,7 +52,7 @@ letter grades now count for slightly less.
 - **A 13th scanner: RPKI route origin (`rpki`).** Resolves the site's IPv4
   and IPv6 addresses, asks RIPEstat which prefix and network announce each one
   in BGP, then whether a signed ROA authorises that pair. All routes valid is
-  an A+. No ROA is a B: a hijacked announcement would not be rejected, but most
+  an A+. No ROA is a B: a hijacked announcement would not be rejected, but much
   address space has none and it is usually the hosting provider's to fix. A
   route that contradicts its ROA is a critical finding and an F. Every finding
   names the announcing network. Weighted 1.0. Runs on IP targets too. Needs no
