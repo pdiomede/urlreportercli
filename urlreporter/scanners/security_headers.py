@@ -99,7 +99,10 @@ class SecurityHeadersScanner:
                     why = f"securityheaders.com blocks automated requests (HTTP {resp.status_code})"
                 else:
                     why = f"securityheaders.com refused the request (HTTP {resp.status_code})"
-                return None, f"HTTP {resp.status_code}", why
+                # "returned HTTP <n>" is what explain_error recognises; a bare
+                # "HTTP 403" fell through to "a fault in Url Reporter" when the
+                # direct fetch failed too and this became the scan's error.
+                return None, f"securityheaders.com returned HTTP {resp.status_code}", why
             # X-Grade header gone — parse grade from HTML body.
             m = re.search(
                 r'class="score".*?<span[^>]*>([A-F][+\-]?)</span>',

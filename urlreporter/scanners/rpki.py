@@ -202,6 +202,13 @@ class RPKIScanner:
                 raise _LookupError(str(e)) from e
             except (httpx.HTTPError, ValueError) as e:
                 raise _LookupError(f"{label}: {describe_exc(e)}") from e
+            # Valid JSON that is not an object raised AttributeError below,
+            # which skipped _LookupError and failed the scan as "a fault in
+            # Url Reporter".
+            if not isinstance(data, dict):
+                raise _LookupError(
+                    f"Cloudflare DoH returned an unexpected answer for the {rtype} lookup of {host}."
+                )
             rcode = data.get("Status", 0)
             if rcode == 3:  # NXDOMAIN: the name does not exist.
                 return []
@@ -211,8 +218,9 @@ class RPKIScanner:
                     f"lookup of {host}."
                 )
             found: set[ipaddress.IPv4Address | ipaddress.IPv6Address] = set()
-            for a in data.get("Answer") or []:
-                if a.get("type") != code:
+            answers = data.get("Answer")
+            for a in answers if isinstance(answers, list) else []:
+                if not isinstance(a, dict) or a.get("type") != code:
                     continue
                 try:
                     found.add(ipaddress.ip_address((a.get("data") or "").strip()))
@@ -227,16 +235,20 @@ class RPKIScanner:
         return checked, len(v4) + len(v6)
 
     async def _ripestat(self, call: str, params: dict[str, str],
-                        client: httpx.AsyncClient) -> dict:
+                        client: httpx.AsyncClient, *, quick: bool = False) -> dict:
+        """One RIPEstat call. `quick` is for optional lookups: one attempt and
+        a short timeout, since the whole result waits on them."""
         label = f"{self.name} RIPEstat {call} {' '.join(params.values())}"
         try:
             resp = await retry_request(
                 lambda: client.get(
                     RIPESTAT.format(call=call),
                     params={**params, "sourceapp": SOURCEAPP},
-                    timeout=20.0,
+                    timeout=5.0 if quick else 20.0,
                 ),
                 label=label, logger=log,
+                backoffs=() if quick else None,
+                retry_timeouts=not quick,
             )
             if resp.status_code >= 400:
                 raise _LookupError(f"RIPEstat returned HTTP {resp.status_code} for {call}.")
@@ -245,6 +257,8 @@ class RPKIScanner:
             raise _LookupError(str(e)) from e
         except (httpx.HTTPError, ValueError) as e:
             raise _LookupError(f"{label}: {describe_exc(e)}") from e
+        if not isinstance(body, dict):
+            raise _LookupError(f"RIPEstat returned an unexpected answer for {call}.")
         if body.get("status") != "ok" or not isinstance(body.get("data"), dict):
             messages = "; ".join(
                 str(m[1]) for m in body.get("messages") or [] if isinstance(m, list) and len(m) > 1
@@ -283,7 +297,7 @@ class RPKIScanner:
             {"resource": f"AS{route.origin}", "prefix": route.prefix},
             client,
         )
-        route.status = (data.get("status") or "unknown").lower()
+        route.status = str(data.get("status") or "unknown").lower()
 
     async def _name_holders(self, routes: list[_Route], client: httpx.AsyncClient) -> None:
         """Best effort: who operates each origin AS. Never fails the scan."""
@@ -291,7 +305,10 @@ class RPKIScanner:
 
         async def holder(asn: str) -> str | None:
             try:
-                data = await self._ripestat("as-overview", {"resource": f"AS{asn}"}, client)
+                # quick: this only names the operator, and with the default
+                # 3/8/20s retries a failing as-overview held the whole RPKI
+                # result back by 31 seconds or more.
+                data = await self._ripestat("as-overview", {"resource": f"AS{asn}"}, client, quick=True)
             except _LookupError as e:
                 log.warning("%s: no holder name for AS%s (%s)", self.name, asn, e)
                 return None

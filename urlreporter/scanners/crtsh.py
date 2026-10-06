@@ -117,7 +117,11 @@ class CrtShScanner:
         resting = _crtsh_resting()
         sources = [("crt.sh", _fetch_crtsh), ("CertSpotter", _fetch_certspotter)]
         if resting:
-            sources.reverse()
+            # CertSpotter goes first, but quickly: with its full retry policy a
+            # 429 (its responses advertise a limit of 10, with an hour-long
+            # Retry-After) or a stall held every scan in the rest window for
+            # 31 to 151 seconds before crt.sh, possibly healthy, was asked.
+            sources = [("CertSpotter", _fetch_certspotter_quickly), ("crt.sh", _fetch_crtsh)]
         errors: list[str] = []
         for source, fetch in sources:
             try:
@@ -185,7 +189,21 @@ async def _fetch_crtsh(host: str, client: httpx.AsyncClient) -> list[dict[str, A
     return data
 
 
-async def _fetch_certspotter(host: str, client: httpx.AsyncClient) -> list[dict[str, Any]]:
+async def _fetch_certspotter_quickly(host: str, client: httpx.AsyncClient) -> list[dict[str, Any]]:
+    """CertSpotter as the first source while crt.sh rests: one attempt, the
+    same timeout as crt.sh, so a failure costs seconds before crt.sh is asked."""
+    return await _fetch_certspotter(host, client, backoffs=(), timeout=CRTSH_TIMEOUT,
+                                    retry_timeouts=False)
+
+
+async def _fetch_certspotter(
+    host: str,
+    client: httpx.AsyncClient,
+    *,
+    backoffs: tuple[float, ...] | None = None,
+    timeout: float = 30.0,
+    retry_timeouts: bool = True,
+) -> list[dict[str, Any]]:
     """Fetch from CertSpotter and normalize to the crt.sh shape used by _grade.
 
     CertSpotter's response shape (subset):
@@ -213,8 +231,9 @@ async def _fetch_certspotter(host: str, client: httpx.AsyncClient) -> list[dict[
     url_to_get = CERTSPOTTER_API.format(host=quote(host, safe=""))
     try:
         resp = await retry_request(
-            lambda: client.get(url_to_get, timeout=30.0),
+            lambda: client.get(url_to_get, timeout=timeout),
             label="CertSpotter", logger=log,
+            backoffs=backoffs, retry_timeouts=retry_timeouts,
         )
     except RetryExhausted as e:
         raise _SourceFailed(str(e)) from e
@@ -300,16 +319,32 @@ def _grade(
 
     findings: list[Finding] = []
     if n_total == 0:
-        findings.append(Finding(
-            severity="medium",
-            title="No certificates found in CT logs",
-            detail="No record of any TLS certificate ever being issued for this host.",
-            recommendation="If this is a real public site, that suggests the domain is brand-new or its certs aren't reaching public CT logs.",
-        ))
+        if source == "CertSpotter":
+            # CertSpotter lists unexpired issuances only, so an empty answer
+            # cannot say "never issued": the finding claimed exactly that for
+            # hosts whose certificates had all expired.
+            findings.append(Finding(
+                severity="medium",
+                title="No unexpired certificates found in CT logs",
+                detail=(
+                    "CertSpotter, which lists only certificates that have not expired, has none "
+                    "for this host. Either none was ever issued or every one has expired; crt.sh, "
+                    "which keeps expired ones, was unavailable to tell which."
+                ),
+                recommendation="If this is a real public site, check that it serves a current, publicly trusted certificate.",
+            ))
+            summary = "No unexpired certificates found in Certificate Transparency logs."
+        else:
+            findings.append(Finding(
+                severity="medium",
+                title="No certificates found in CT logs",
+                detail="No record of any TLS certificate ever being issued for this host.",
+                recommendation="If this is a real public site, that suggests the domain is brand-new or its certs aren't reaching public CT logs.",
+            ))
+            summary = "No certificates found in Certificate Transparency logs."
         return ScanResult(
             scanner=CrtShScanner.name, ok=True, grade="D", score=40,
-            summary=_with_source("No certificates found in Certificate Transparency logs.", source,
-                                 crtsh_skipped=crtsh_skipped),
+            summary=_with_source(summary, source, crtsh_skipped=crtsh_skipped),
             findings=findings, link=link,
         )
 

@@ -16,6 +16,19 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- **RPKI waited on a cosmetic lookup and could fail on odd JSON.** The
+  operator-name lookup used the default 3/8/20s retries, so a failing
+  RIPEstat `as-overview` held the RPKI result back by 31 seconds or more;
+  it now gets one short attempt. Valid JSON that was not an object, from
+  DoH or RIPEstat, failed the whole scanner as "a fault in Url Reporter".
+- **A refused securityheaders.com grade was misexplained.** When the target
+  was also unreachable, the error was a bare "HTTP 403" and the report put
+  it down to "most likely a fault in Url Reporter".
+- **crt.sh's fallback claimed too much.** When CertSpotter served the data and
+  listed nothing, the finding said no certificate was "ever" issued, but
+  CertSpotter lists unexpired certificates only.
+- **The README's `config.env` example lacked `SCANNER_RPKI`,** and "Adding a
+  scanner" now names the `explain_score` weight table.
 - **The HTML report scrolled sideways on a phone.** At 375px its scanner
   table was about 450px wide; long names, summaries and error text now wrap
   on narrow screens.

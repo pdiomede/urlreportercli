@@ -156,6 +156,7 @@ SCANNER_HTTPS_REDIRECT=true
 SCANNER_DOS_POSTURE=true
 SCANNER_EMAIL_AUTH=true
 SCANNER_SECURITY_TXT=true
+SCANNER_RPKI=true
 
 SCAN_TIMEOUT_SECONDS=180
 SSL_LABS_USE_CACHE=true
@@ -204,6 +205,7 @@ urlreporter explain-score
 3. Register it in `urlreporter/scanners/__init__.py` under `REGISTRY`.
 4. Add `SCANNER_<KEY>=true` to `config.env` and a default in `config.py`'s `enabled` dict.
 5. Give it a deliberate weight in `grading.py:SCANNER_WEIGHTS` (otherwise it silently gets 1.0), and if it sets a letter and a score by hand, pick a pair that reads back through `score_to_letter`.
+6. Add its row to the weight table in `cli.py:explain_score`.
 
 ## Security
 
