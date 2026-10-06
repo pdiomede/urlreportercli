@@ -69,8 +69,8 @@ ladder:
 
     90 or more  = A+    65 to 69    = B-    40 to 44    = D
     85 to 89    = A     60 to 64    = C+    35 to 39    = D-
-    80 to 84    = A-    55 to 59    = C     under 35    = F
-    75 to 79    = B+    50 to 54    = C-
+    80 to 84    = A-    55 to 59    = C     30 to 34    = E
+    75 to 79    = B+    50 to 54    = C-    under 30    = F
     70 to 74    = B     45 to 49    = D+
 
 Caveats

@@ -71,6 +71,11 @@ number.
   added an "Open external scan" link. They now read "not applicable" and are
   counted separately from real link-outs. Grades were not affected.
 - **Several unannounced addresses read as one** ("… is not announced").
+- **An SSL Labs E read back as an F.** The ladder went from D- (35 to 39)
+  straight to F, so an E counted as 34 and an SSL Labs E on its own gave an
+  overall F. The ladder now has an E rung at 30 to 34 and F starts under 30;
+  `urlreporter explain-score` prints it. No scores change, only the letter for
+  an average of 30 to 34.
 
 - **Mozilla Observatory's reason for refusing a site was thrown away.**
   Observatory answers a site it can't grade with HTTP 422 and a reason such as

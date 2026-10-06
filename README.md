@@ -182,7 +182,7 @@ scanner that returned one. Three weight tiers:
 
 Link-out scanners (no public API) and scanners that errored are skipped, and listed separately in
 the report. The weighted average is rounded to a whole number and mapped to a letter (90 or more is
-A+, 85 to 89 is A, and so on down to under 35 is F).
+A+, 85 to 89 is A, and so on down to 30 to 34 is E and under 30 is F).
 
 For the full breakdown — the letter-to-number table, the weight tiers, and the honest caveats about
 the methodology — run:

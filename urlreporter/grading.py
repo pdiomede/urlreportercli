@@ -12,7 +12,15 @@ _LADDER: tuple[tuple[int, str], ...] = (
     (75, "B+"), (70, "B"), (65, "B-"),
     (60, "C+"), (55, "C"), (50, "C-"),
     (45, "D+"), (40, "D"), (35, "D-"),
+    # SSL Labs grades E between D and F. Without a rung of its own an E
+    # counted as 34 and read back as F, so an SSL Labs E alone made an
+    # overall F.
+    (30, "E"),
 )
+
+# Every letter the ladder can produce, best first. /stats lists its grade
+# distribution in this order, so a letter added above shows up there too.
+GRADE_LETTERS: tuple[str, ...] = tuple(letter for _, letter in _LADDER) + ("F",)
 
 
 def _band_top(letter: str) -> int:
@@ -26,8 +34,6 @@ def _band_top(letter: str) -> int:
 # graded B by every scanner was reported A-.
 LETTER_TO_SCORE: dict[str, int] = {
     **{letter: _band_top(letter) for _, letter in _LADDER},
-    # SSL Labs' E sits below D-, where the ladder only has F.
-    "E": _LADDER[-1][0] - 1,
     "F": 0,
     "T": 0,
     "M": 0,
@@ -62,7 +68,7 @@ def fit_score_to_letter(score: int, letter: str) -> int:
     floors = {lt: t for t, lt in _LADDER}
     if key in floors:
         low, high = floors[key], LETTER_TO_SCORE[key]
-    elif key in LETTER_TO_SCORE:  # E, F, T, M: everything under the ladder
+    elif key in LETTER_TO_SCORE:  # F, T, M: everything under the ladder
         low, high = 0, _LADDER[-1][0] - 1
     else:
         return score
