@@ -9,10 +9,24 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [1.1.2] - 2026-10-06
 
-A small release: requests carry the current version in their User-Agent, and
-an unused setting is gone.
+A small release: a slow SSL Labs is explained while the scan runs, requests
+carry the current version in their User-Agent, and an unused setting is gone.
+
+### Added
+
+- **The CLI explains a slow SSL Labs.** Once SSL Labs is the only scanner
+  left and has run for 15 seconds, the progress block adds: "SSL Labs is
+  still testing this site: if it hasn't tested the site recently, it runs a
+  fresh test, which usually takes 1-3 minutes." On a terminal it sits under
+  the block and clears when SSL Labs finishes; piped output gets it once, as
+  a plain line.
 
 ### Changed
+
+- **A timed-out SSL Labs says so plainly.** Its row now reads "SSL Labs was
+  still testing after 3 minutes, so it isn't included in the grade. Scan
+  again in a few minutes to include it." The second sentence is left out
+  when `SSL_LABS_USE_CACHE` is off.
 
 - **The User-Agent follows the release.** Requests said `urlreporter/0.1`,
   pinned in `config.env`. They now say `urlreporter/<version>
@@ -23,6 +37,12 @@ an unused setting is gone.
 - **The `INTERNETNL_API_TOKEN` setting.** It never did anything: internet.nl's
   batch API terms rule out single-site scans, so internet.nl is always a
   link-out. A leftover line in a config file is ignored.
+
+### Fixed
+
+- **Running timers froze on a terminal.** The progress block was redrawn only
+  when a scanner started or finished, so a row could read "running... 3.4s"
+  for minutes. It now redraws once a second.
 
 ## [1.1.1] - 2026-10-06
 

@@ -37,12 +37,33 @@ MAX_TRANSIENT_RETRIES = 3
 TRANSIENT_BACKOFFS = [5, 15, 30]  # seconds; len == MAX_TRANSIENT_RETRIES
 
 
+def _duration_words(seconds: int) -> str:
+    """180 -> "3 minutes", 90 -> "90 seconds"."""
+    if seconds >= 60 and seconds % 60 == 0:
+        minutes = seconds // 60
+        return f"{minutes} minute{'' if minutes == 1 else 's'}"
+    return f"{seconds} seconds"
+
+
 # Start of the error for an assessment SSL Labs itself ended in ERROR.
 SSLLABS_ERROR_PREFIX = "SSL Labs could not assess this site: "
 
 class SSLLabsScanner:
     name = "SSL Labs"
     config_key = "ssl_labs"
+
+    def _timed_out_summary(self) -> str:
+        """What the row says when SSL Labs was still testing at the deadline."""
+        summary = (
+            f"SSL Labs was still testing after {_duration_words(self.timeout_seconds)}, "
+            "so it isn\u2019t included in the grade."
+        )
+        # Only true with the cache on: the next scan then picks up the result
+        # SSL Labs finishes in the meantime. With it off, every scan starts a
+        # fresh test and would stop at the same limit.
+        if self.use_cache:
+            summary += " Scan again in a few minutes to include it."
+        return summary
 
     def __init__(self, *, use_cache: bool = True, timeout_seconds: int = 180) -> None:
         self.use_cache = use_cache
@@ -128,12 +149,7 @@ class SSLLabsScanner:
                         ok=True,
                         grade=None,
                         score=None,
-                        summary=(
-                            f"Assessment still running after {self.timeout_seconds}s. "
-                            "First-time SSL Labs scans take 1-3 minutes; cached "
-                            "scans return in seconds. Open the link to watch live "
-                            "progress on ssllabs.com."
-                        ),
+                        summary=self._timed_out_summary(),
                         findings=[],
                         link=link,
                     )

@@ -17,6 +17,7 @@ from .logging_setup import setup_logger
 from .report import render_html, render_markdown, render_summary
 from .runner import Report, _prioritize, run_scans
 from .scanners import REGISTRY
+from .scanners.ssllabs import SSLLabsScanner
 from .urlutil import InvalidURL, normalize_url
 
 
@@ -107,6 +108,13 @@ def main() -> None:
     """urlreporter - aggregate public security scanners for a URL."""
 
 
+# The same words as the progress page's note (templates/progress.html).
+SLOW_SSL_LABS_NOTE = (
+    "SSL Labs is still testing this site: if it hasn\u2019t tested the site "
+    "recently, it runs a fresh test, which usually takes 1\u20133 minutes."
+)
+
+
 class _ProgressPrinter:
     """Renders a per-scanner progress block on stderr.
 
@@ -119,12 +127,21 @@ class _ProgressPrinter:
     On terminals (isatty) the block is updated in place using ANSI cursor
     moves. On non-terminals (pipes, file redirects) each event prints a
     plain line.
+
+    `tick()` is called about once a second while the scan runs. It keeps the
+    running timers moving on a terminal (the block used to redraw only on
+    events, so a row could sit at "running… 3.4s" for minutes) and shows the
+    slow-SSL-Labs note, the CLI's version of the progress page's.
     """
 
     DONE = "✓"
     ERR = "x"
     RUN = "-"
     WAIT = " "
+
+    # SSL Labs answers in a few seconds when it has a recent result for the
+    # site; still running past this, it is doing a fresh test (1-3 minutes).
+    SLOW_SSL_LABS_SECONDS = 15
 
     def __init__(self, stream) -> None:
         self.stream = stream
@@ -133,6 +150,8 @@ class _ProgressPrinter:
         self._state: dict[str, dict] = {}
         self._started = time.monotonic()
         self._lines_drawn = 0
+        self._finished = False
+        self._slow_note_printed = False
 
     def __call__(self, event: dict) -> None:
         et = event.get("type")
@@ -159,7 +178,38 @@ class _ProgressPrinter:
             self._state[name]["not_applicable"] = event.get("not_applicable")
             self._render()
         elif et == "done":
+            self._finished = True
             self._render(final=True)
+
+    def tick(self) -> None:
+        if self._finished or not self._order:
+            return
+        if self.tty:
+            self._render()
+        elif self._ssl_labs_is_slow() and not self._slow_note_printed:
+            # Piped output gets the note once, not a block per tick.
+            self._slow_note_printed = True
+            self.stream.write(f"  Note: {SLOW_SSL_LABS_NOTE}\n")
+            self.stream.flush()
+
+    def _ssl_labs_is_slow(self) -> bool:
+        name = SSLLabsScanner.name
+        ssl = self._state.get(name)
+        if self._finished or not ssl or ssl.get("status") != "running":
+            return False
+        if any(self._state.get(n, {}).get("status") not in ("done", "error")
+               for n in self._order if n != name):
+            return False
+        return time.monotonic() - ssl.get("started", self._started) >= self.SLOW_SSL_LABS_SECONDS
+
+    def _note_lines(self) -> list[str]:
+        """Two short lines, so a narrow terminal doesn't wrap them: a wrapped
+        line takes two rows and throws off the cursor-up redraw."""
+        return [
+            "",
+            "  Note: SSL Labs is still testing this site: if it hasn\u2019t tested",
+            "  the site recently, it runs a fresh test, which usually takes 1\u20133 minutes.",
+        ]
 
     def _format_line(self, name: str) -> str:
         s = self._state.get(name, {})
@@ -201,14 +251,44 @@ class _ProgressPrinter:
 
     def _render(self, initial: bool = False, final: bool = False) -> None:
         lines = [self._format_line(n) for n in self._order]
+        if self.tty and not final and self._ssl_labs_is_slow():
+            lines += self._note_lines()
         if self.tty and self._lines_drawn:
             # Move cursor up to overwrite previous block.
             self.stream.write(f"\x1b[{self._lines_drawn}A")
         for line in lines:
             self.stream.write("\x1b[2K" if self.tty else "")
             self.stream.write(line + "\n")
+        leftover = self._lines_drawn - len(lines) if self.tty else 0
+        if leftover > 0:
+            # The block shrank (the note went away): blank the rows it used,
+            # then return to the end of the block.
+            self.stream.write("\x1b[2K\n" * leftover)
+            self.stream.write(f"\x1b[{leftover}A")
         self._lines_drawn = len(lines) if self.tty else 0
         self.stream.flush()
+
+
+_TICK_SECONDS = 1.0
+
+
+async def _scan_with_ticks(target, cfg, handler, logger, progress):  # noqa: ANN001, ANN202
+    """run_scans, with `progress.tick()` about once a second while it runs."""
+    async def ticker() -> None:
+        while True:
+            await asyncio.sleep(_TICK_SECONDS)
+            progress.tick()
+
+    task = asyncio.create_task(ticker()) if progress is not None else None
+    try:
+        return await run_scans(target, cfg, on_event=handler, logger=logger)
+    finally:
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
 
 class _IncrementalWriter:
@@ -364,7 +444,7 @@ def scan(url: str, config_path: Path | None, out_path: Path | None, quiet: bool,
     error_msg: str | None = None
     report: Report | None = None
     try:
-        report = asyncio.run(run_scans(target, cfg, on_event=handler, logger=logger))
+        report = asyncio.run(_scan_with_ticks(target, cfg, handler, logger, progress))
     except KeyboardInterrupt:
         interrupted = True
         logger.warning("CLI scan interrupted by user")
