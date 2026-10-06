@@ -26,6 +26,15 @@ _OPTIONAL_FIELDS: tuple[tuple[str, str, int, str], ...] = (
     ("preferred-languages", "Preferred-Languages", 3, "the languages you read reports in"),
 )
 
+# One example line per optional field. The recommendation shows the first
+# missing one; it used to always show Policy, even to a file that had one.
+_FIELD_EXAMPLES: dict[str, str] = {
+    "policy": "Policy: https://example.com/security-policy",
+    "encryption": "Encryption: https://example.com/pgp-key.txt",
+    "acknowledgments": "Acknowledgments: https://example.com/thanks",
+    "preferred-languages": "Preferred-Languages: en",
+}
+
 
 def _authority(host: str) -> str:
     """Host as it must appear in a URL: IPv6 literals need their brackets back.
@@ -315,7 +324,7 @@ class SecurityTxtScanner:
                     )
                 ),
                 recommendation=(
-                    "Add the ones that apply, e.g. `Policy: https://example.com/security-policy`. "
+                    f"Add the ones that apply, e.g. `{_FIELD_EXAMPLES[missing_optional[0][0]]}`. "
                     "Leave out any you can't back up: an Encryption line needs a real key."
                 ),
             ))

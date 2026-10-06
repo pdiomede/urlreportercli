@@ -41,7 +41,8 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   medium finding, so neither drops out of the list.
 - **security.txt lost points without saying why.** The optional Policy (+5),
   Encryption (+4) and Acknowledgments (+3) fields were scored silently; a new
-  low-severity finding names whichever are missing.
+  low-severity finding names whichever are missing, and its example line is for one of
+  them (it first suggested `Policy:` even to a file that had one).
 - **Link-outs were described as having "no public API".** The progress line,
   the summary and the report files now say "link-out (manual check)": every
   service that produces one has an API, it just can't be used for this scan.
