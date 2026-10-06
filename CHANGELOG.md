@@ -7,6 +7,12 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- **`SECURITY.md`**: how to report a vulnerability privately
+  (security@pdiomede.com), what is in scope, what to expect, and the
+  safe-harbour terms. Linked from the README.
+
 ### Fixed
 
 - **crt.sh mis-graded healthy sites and counted one CA as several.**

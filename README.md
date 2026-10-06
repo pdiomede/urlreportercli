@@ -205,6 +205,11 @@ urlreporter explain-score
 4. Add `SCANNER_<KEY>=true` to `config.env` and a default in `config.py`'s `enabled` dict.
 5. Give it a deliberate weight in `grading.py:SCANNER_WEIGHTS` (otherwise it silently gets 1.0), and if it sets a letter and a score by hand, pick a pair that reads back through `score_to_letter`.
 
+## Security
+
+Found a security problem? Please report it privately to **security@pdiomede.com** rather than in a
+public issue. [SECURITY.md](./SECURITY.md) has the scope, what to expect, and the safe-harbour terms.
+
 ## Versioning
 
 Version numbers follow [Semantic Versioning](https://semver.org/). All changes are recorded in [CHANGELOG.md](./CHANGELOG.md).
