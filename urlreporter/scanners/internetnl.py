@@ -13,9 +13,13 @@ REPORT_URL = "https://internet.nl/site/{host}/"
 
 
 class InternetNLScanner:
-    """internet.nl exposes a batch API that requires registration; there is no free
-    single-scan API. Without a token we emit a link-out result so the user can run
-    the test manually. With a token, future versions can call the batch API.
+    """Always a link-out: internet.nl has no API this tool may use.
+
+    Its only API is a batch API whose terms forbid this use three ways:
+    single-domain requests are not allowed, it may not back a public
+    third-party front-end, and fair use caps it at 2 batches a week (research
+    and clauses in NEXT_SCANNER.md). So no token can turn this into a scan;
+    the result points the reader at internet.nl's own test instead.
     """
 
     name = "internet.nl"
@@ -35,23 +39,26 @@ class InternetNLScanner:
             )
         link = REPORT_URL.format(host=host)
 
-        # Batch-API integration is not implemented yet. Whether or not a token
-        # is configured, we emit the same link-out result so the user gets
-        # something usable instead of a hard error. If a token IS configured,
-        # we log a warning so the operator knows it's currently ignored.
+        # A configured token is ignored, and said so: an operator who set one
+        # must not assume it is in use. Visitors never set it, so the plain
+        # summary doesn't mention it. It used to say "no INTERNETNL_API_TOKEN
+        # configured (batch API requires registration)", which told every web
+        # visitor about a server setting and implied registering would help.
         if self.api_token:
             log.warning(
-                "%s: INTERNETNL_API_TOKEN is set but the batch-API integration is not yet implemented; falling back to manual link-out",
+                "%s: INTERNETNL_API_TOKEN is set but ignored: internet.nl's batch API "
+                "terms rule out single-site scans for a public front-end "
+                "(see NEXT_SCANNER.md); using the manual link-out",
                 self.name,
             )
             summary = (
-                "Link-out: INTERNETNL_API_TOKEN configured but batch-API integration "
-                "is not implemented yet (using manual check)."
+                "Link-out: INTERNETNL_API_TOKEN is set but not used, because "
+                "internet.nl's batch API terms rule out single-site scans."
             )
         else:
             summary = (
-                "Link-out: no INTERNETNL_API_TOKEN configured "
-                "(internet.nl batch API requires registration)."
+                "Link-out: internet.nl offers no API for single-site scans. "
+                "Open the link to run its test."
             )
 
         return ScanResult(

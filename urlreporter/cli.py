@@ -61,7 +61,7 @@ than optional hygiene markers:
                  crt.sh, internet.nl, RPKI
 
 Two kinds are skipped:
-  * Link-out scanners (no public API; e.g. internet.nl when no token).
+  * Link-out scanners (no API this tool can use; e.g. internet.nl).
   * Failed scanners (timeout, malformed response, rate-limit).
 
 When no scanner returned a number, the report says

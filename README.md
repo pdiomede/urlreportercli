@@ -35,7 +35,7 @@ By default `urlreporter` queries:
 | 1 | [SSL Labs](https://www.ssllabs.com/ssltest/) | TLS / certificate configuration (letter grade). Polls; can take 1-3 minutes on a cache miss. |
 | 2 | [Mozilla Observatory v2](https://developer.mozilla.org/en-US/observatory) | HTTP headers and best practices (score + grade). |
 | 3 | [securityheaders.com](https://securityheaders.com/) | HTTP security headers (letter grade). Now sits behind Cloudflare bot protection, so when the third-party probe gets a JS challenge, Url Reporter fetches the target&#39;s headers itself and computes a letter grade locally with a calibrated penalty table. |
-| 4 | [internet.nl](https://internet.nl/) | Web standards: TLS, DNSSEC, IPv6, mail. **Link-out** unless an API token is configured (no free single-scan API). |
+| 4 | [internet.nl](https://internet.nl/) | Web standards: TLS, DNSSEC, IPv6, mail. Always a **link-out**: its only API is a batch API whose terms rule out single-site scans for a tool like this. |
 | 5 | [hstspreload.org](https://hstspreload.org/) | Whether the domain is on the Chrome HSTS preload list. |
 | 6 | [crt.sh](https://crt.sh/) + [CertSpotter](https://sslmate.com/certspotter/) | Certificate Transparency: every cert ever issued, graded by CA concentration over the last 90 days. crt.sh is the primary; falls over to CertSpotter (different operator, same CT data) when crt.sh exhausts retries. If both are unreachable, the row degrades to a link-out instead of a red ERROR. |
 | 7 | CAA records (via Cloudflare DoH) | DNS-level pin on which CAs may issue certs for the domain (walks up to inherited records). |

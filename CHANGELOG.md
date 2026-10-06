@@ -71,6 +71,12 @@ number.
   added an "Open external scan" link. They now read "not applicable" and are
   counted separately from real link-outs. Grades were not affected.
 - **Several unannounced addresses read as one** ("… is not announced").
+- **internet.nl's summary implied a token would enable it.** With no token
+  it said "no INTERNETNL_API_TOKEN configured (internet.nl batch API requires
+  registration)"; with one, "integration is not implemented yet". Neither is
+  true: internet.nl's batch API terms rule out single-site scans, so the row
+  is always a link-out. It now says so, and a configured token is reported as
+  set but not used.
 - **Mozilla Observatory showed two scores on one line.** Its score is held
   inside the band of Mozilla's letter, but the summary still printed Mozilla's
   raw number unlabelled: "A (89/100) - HTTP best-practice grade A (90/100)".
