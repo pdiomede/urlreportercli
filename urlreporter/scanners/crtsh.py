@@ -31,6 +31,10 @@ LOOKBACK_DAYS = 90
 # there is a fallback, and when crt.sh is down it is usually down for hours
 # (502s on every request, its own web page included, all of 6 Oct 2026).
 # The default schedule cost every scan ~45s before CertSpotter was asked.
+# That retry is for quick failures only: a timed-out request is not retried
+# (`retry_timeouts=False` below). On the same day crt.sh also accepted
+# connections and then sent nothing for ~36s before a 502, and a retry of a
+# stall like that cost a second 20s timeout, so one scan took 40s.
 CRTSH_BACKOFFS: tuple[float, ...] = (3.0,)
 CRTSH_TIMEOUT = 20.0
 
@@ -137,6 +141,7 @@ async def _fetch_crtsh(host: str, client: httpx.AsyncClient) -> list[dict[str, A
             backoffs=CRTSH_BACKOFFS,
             # crt.sh under load returns 404 for valid queries; retry it.
             treat_404_as_transient=True,
+            retry_timeouts=False,
         )
     except RetryExhausted as e:
         raise _SourceFailed(str(e)) from e

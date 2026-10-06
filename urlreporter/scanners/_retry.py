@@ -40,6 +40,7 @@ async def retry_request(
     transient_statuses: frozenset[int] | set[int] = TRANSIENT_STATUSES,
     logger: logging.Logger | None = None,
     treat_404_as_transient: bool = False,
+    retry_timeouts: bool = True,
 ) -> httpx.Response:
     """Run `fn` with retries on transient HTTP/network failures.
 
@@ -48,6 +49,11 @@ async def retry_request(
     return immediately. On transient statuses or `httpx.RequestError` (network
     timeouts, connection failures, DNS errors) we sleep and retry, up to
     `len(backoffs)` extra attempts.
+
+    `retry_timeouts=False` gives up on the first `httpx.TimeoutException`
+    instead, for an upstream with a fallback whose stalls do not clear in a
+    few seconds: each retry would cost a full timeout before the fallback is
+    asked. Quick failures (a 502, a refused connection) are still retried.
 
     Raises `RetryExhausted` after the final attempt, with `last_exception`
     populated when the failures were network-level. Non-transient HTTP
@@ -59,6 +65,7 @@ async def retry_request(
     last_exc: BaseException | None = None
     last_status: int | None = None
     attempts = len(bos) + 1
+    tried = 0
 
     for i in range(attempts):
         if i > 0:
@@ -70,6 +77,7 @@ async def retry_request(
                     f"HTTP {last_status}" if last_status is not None else _format_exc(last_exc) if last_exc else "?",
                 )
             await asyncio.sleep(delay)
+        tried += 1
         try:
             resp = await fn()
         except httpx.RequestError as e:
@@ -77,6 +85,8 @@ async def retry_request(
             last_status = None
             if logger is not None:
                 logger.warning("%s: network error %s", label, _format_exc(e))
+            if not retry_timeouts and isinstance(e, httpx.TimeoutException):
+                break
             continue
         if resp.status_code in transient_statuses:
             last_status = resp.status_code
@@ -86,7 +96,7 @@ async def retry_request(
             continue
         return resp
 
-    msg = f"{label}: gave up after {attempts} attempts"
+    msg = f"{label}: gave up after {tried} attempt{'' if tried == 1 else 's'}"
     if last_status is not None:
         msg += f"; last HTTP {last_status}"
     if last_exc is not None:

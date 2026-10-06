@@ -30,7 +30,7 @@ Please don't open a public GitHub issue.
 
 - An acknowledgement within **5 working days**
 - Updates until the report is fixed or closed
-- Credit in the release notes, if you want it
+- Credit below and in the release notes, if you want it
 - No bug bounty
 - Fixes go into the live site and the latest CLI release only
 
@@ -41,3 +41,10 @@ Good-faith research that follows this policy won't be pursued legally. Good fait
 - No harm to the service: no denial-of-service, and no more scanning than the report needs.
 - No access to data that isn't yours, such as other visitors' scan reports. Stop if you reach any.
 - A reasonable time to fix before you disclose publicly.
+
+## Acknowledgments
+
+People who report a valid issue are thanked here, by name or handle, if they
+want to be.
+
+None yet.

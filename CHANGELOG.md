@@ -10,8 +10,9 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### Added
 
 - **`SECURITY.md`**: how to report a vulnerability privately
-  (security@pdiomede.com), what is in scope, what to expect, and the
-  safe-harbour terms. Linked from the README.
+  (security@pdiomede.com), what is in scope, what to expect, the
+  safe-harbour terms, and an Acknowledgments section for the people who
+  report issues. Linked from the README.
 
 ### Fixed
 
@@ -30,7 +31,11 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   request with HTTP 502 on 6 Oct 2026, including its own web page, and the
   scanner went through three retries (3, 8 and 20 seconds of backoff) before
   asking CertSpotter. It now retries once, after 3 seconds, with a 20-second
-  timeout: the fallback answered in 4 seconds in the same conditions.
+  timeout: the fallback answered in 4 seconds in the same conditions. A
+  request that times out is not retried at all: crt.sh also accepted
+  connections that day and sent nothing for about 36 seconds before a 502,
+  and retrying one of those cost a second timeout (a production scan took 40
+  seconds). A stall now costs one 20-second timeout before CertSpotter.
 - **"Top recommendations" was mostly confirmations.** Informational findings
   ("SPF policy is hardfail", "RPKI-valid: …") are no longer listed as
   recommendations in the summary or the report files; they stay in each
