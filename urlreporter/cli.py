@@ -144,6 +144,7 @@ class _ProgressPrinter:
             self._state[name]["grade"] = event.get("grade")
             self._state[name]["score"] = event.get("score")
             self._state[name]["error"] = event.get("error")
+            self._state[name]["not_applicable"] = event.get("not_applicable")
             self._render()
         elif et == "done":
             self._render(final=True)
@@ -170,7 +171,12 @@ class _ProgressPrinter:
                 bits.append(grade)
             if score is not None:
                 bits.append(f"{score}/100")
-            extra = "  " + " · ".join(bits) if bits else "  link-out (no public API)"
+            if bits:
+                extra = "  " + " · ".join(bits)
+            elif s.get("not_applicable"):
+                extra = "  not applicable"
+            else:
+                extra = "  link-out (no public API)"
             tail = f"done   {elapsed:>5.1f}s{extra}"
         elif status == "error":
             elapsed = s.get("elapsed") or 0.0

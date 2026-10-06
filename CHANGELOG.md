@@ -46,6 +46,32 @@ letter grades now count for slightly less.
   key (RFC 6376), and a `*._domainkey` wildcard returns one for every selector
   probed. Only a non-empty key counts now.
 
+### Fixed after the first 1.1.0 push
+
+The first push of 1.1.0 to this repository (`3f2e22f`) shipped the RPKI
+scanner with the defects below. They were fixed without changing the version
+number.
+
+- **RPKI checked a different sample of addresses on every scan.** It kept the
+  first 2 addresses per family in the resolver's answer order, which rotates:
+  five scans of yahoo.com reported four different sets of routes, and the
+  summary never said 8 of its 12 addresses went unchecked. Every address is
+  now checked, up to 8 per family in sorted order, and the summary says when
+  a site has more. Routes with no ROA are reported once per announcing
+  network.
+- **A failed RPKI lookup left its sibling requests running** on the HTTP
+  client the run had already closed. They are now cancelled.
+- **A DNS failure on the site was blamed on Url Reporter.** A SERVFAIL on the
+  site's own address lookup was explained as "most likely a fault in Url
+  Reporter"; it now gets the same DNS explanation as the other DNS scanners.
+- **A check that does not apply was labelled a link-out.** For an IP target,
+  CAA, DNSSEC, HSTS Preload and email auth (and RPKI, for a host with no
+  address or an unannounced one) were shown as "link-out (no public API)" in
+  the progress line, the summary, and both report files, and the HTML report
+  added an "Open external scan" link. They now read "not applicable" and are
+  counted separately from real link-outs. Grades were not affected.
+- **Several unannounced addresses read as one** ("… is not announced").
+
 - **Mozilla Observatory's reason for refusing a site was thrown away.**
   Observatory answers a site it can't grade with HTTP 422 and a reason such as
   `site-down` or `unexpected-status-code`, and the scanner reported only

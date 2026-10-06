@@ -75,6 +75,7 @@ class DNSSECScanner:
                     ),
                 )],
                 link=link,
+                not_applicable=True,
             )
 
         try:

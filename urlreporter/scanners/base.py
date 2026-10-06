@@ -34,6 +34,11 @@ class ScanResult:
     findings: list[Finding] = field(default_factory=list)
     link: str = ""
     error: str | None = None
+    # The check does not apply to this target (an IP literal has no CAA, an
+    # unannounced address has no route). Like a link-out it carries no score,
+    # but there is nothing to check by hand either, so it must not be labelled
+    # "link-out (no public API)".
+    not_applicable: bool = False
 
 
 class Scanner(Protocol):

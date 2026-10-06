@@ -33,6 +33,23 @@ _DOH_SCANNERS = frozenset({
     "Email auth (SPF/DMARC/DKIM)",
 })
 
+# Scanners that use DoH for one step only. RPKI resolves the site's addresses
+# over DoH and makes every other call to RIPEstat, so it can't join the set
+# above: that set's "gave up after" rule would blame a RIPEstat outage on
+# Cloudflare. Its DoH errors say "DoH" (the retry label and its own messages),
+# and only those get the DoH explanations. Without this a SERVFAIL on the
+# site's own address lookup was explained as "most likely a fault in Url
+# Reporter".
+_PARTLY_DOH_SCANNERS = frozenset({
+    "RPKI route origin",
+})
+
+
+def _is_doh_error(result: ScanResult) -> bool:
+    if result.scanner in _DOH_SCANNERS:
+        return True
+    return result.scanner in _PARTLY_DOH_SCANNERS and "DoH" in (result.error or "")
+
 # Substrings that mean "we couldn't reach the host" at the network layer.
 _UNREACHABLE_MARKERS = (
     "ConnectError",
@@ -122,7 +139,7 @@ def _explain_http_status(result: ScanResult, status: int, log_path: str | None =
                 "their cache warms; other times this is a real miss."
             ),
         }
-    if 400 <= status <= 499 and result.scanner in _DOH_SCANNERS:
+    if 400 <= status <= 499 and _is_doh_error(result):
         return {
             "title": f"Cloudflare's DNS service rejected the lookup (HTTP {status})",
             "body": (
@@ -241,7 +258,7 @@ def explain_error(result: ScanResult, log_path: str | None = None) -> dict[str, 
 
     is_unreachable = any(m in err for m in _UNREACHABLE_MARKERS)
 
-    if result.scanner in _DOH_SCANNERS and (
+    if _is_doh_error(result) and (
         is_unreachable
         or "cloudflare-dns" in err.lower()
         or ("last error" in err and "gave up after" in err)
@@ -257,7 +274,7 @@ def explain_error(result: ScanResult, log_path: str | None = None) -> dict[str, 
         }
 
     rcode_match = _DOH_RCODE_RE.search(err)
-    if result.scanner in _DOH_SCANNERS and rcode_match:
+    if _is_doh_error(result) and rcode_match:
         rcode = int(rcode_match.group(1))
         if rcode == 2:
             return {
@@ -784,6 +801,8 @@ def render_summary(report: Report, log_path: str | None = None) -> str:
             grade = r.grade or "?"
             score = f" ({r.score}/100)" if r.score is not None else ""
             lines.append(f"  - {r.scanner}: {grade}{score} - {r.summary}")
+        elif r.not_applicable:
+            lines.append(f"  - {r.scanner}: not applicable - {r.summary}")
         else:
             lines.append(f"  - {r.scanner}: link-out (no public API) - {r.summary}")
 
@@ -817,7 +836,8 @@ def render_markdown(report: Report, log_path: str | None = None) -> str:
     else:
         out.append(f"**{report.overall_grade}** ({report.overall_score}/100)")
         graded = [r for r in report.results if r.ok and r.score is not None]
-        skipped = [r for r in report.results if r.ok and r.score is None]
+        skipped = [r for r in report.results if r.ok and r.score is None and not r.not_applicable]
+        not_applicable = [r for r in report.results if r.ok and r.score is None and r.not_applicable]
         failed = [r for r in report.results if not r.ok]
         out.append("")
         parts = [f"{len(graded)} graded scanner(s)"]
@@ -825,6 +845,11 @@ def render_markdown(report: Report, log_path: str | None = None) -> str:
             parts.append(
                 f"{len(skipped)} link-out only ({', '.join(r.scanner for r in skipped)}) "
                 f"- no public API; the report points at the external site for a manual check"
+            )
+        if not_applicable:
+            parts.append(
+                f"{len(not_applicable)} not applicable to this target "
+                f"({', '.join(r.scanner for r in not_applicable)})"
             )
         if failed:
             parts.append(f"{len(failed)} failed ({', '.join(r.scanner for r in failed)})")
@@ -1389,13 +1414,19 @@ def render_html(report: Report, log_path: str | None = None) -> str:
         parts.append("</div>")
 
         graded = [r for r in report.results if r.ok and r.score is not None]
-        skipped = [r for r in report.results if r.ok and r.score is None]
+        skipped = [r for r in report.results if r.ok and r.score is None and not r.not_applicable]
+        not_applicable = [r for r in report.results if r.ok and r.score is None and r.not_applicable]
         failed = [r for r in report.results if not r.ok]
         bits = [f"{len(graded)} graded scanner(s)"]
         if skipped:
             bits.append(
                 f"{len(skipped)} link-out only ({', '.join(_esc(r.scanner) for r in skipped)}) "
                 f"- no public API; the report points at the external site for a manual check"
+            )
+        if not_applicable:
+            bits.append(
+                f"{len(not_applicable)} not applicable to this target "
+                f"({', '.join(_esc(r.scanner) for r in not_applicable)})"
             )
         if failed:
             bits.append(
@@ -1453,7 +1484,7 @@ def render_html(report: Report, log_path: str | None = None) -> str:
         parts.append("<td>")
         if r.ok:
             parts.append(_linkify_html(r.summary or ""))
-            if r.score is None and r.grade is None and row_link:
+            if r.score is None and r.grade is None and row_link and not r.not_applicable:
                 parts.append(
                     f"<div><a href='{_esc(row_link)}' target='_blank' rel='noopener noreferrer'>"
                     f"Open external scan ↗</a></div>"
@@ -1525,6 +1556,8 @@ def _render_scanner_section(r: ScanResult, log_path: str | None = None) -> list[
         header += " - " + " · ".join(bits)
     elif not r.ok:
         header += " - ERROR"
+    elif r.not_applicable:
+        header += " - not applicable"
     else:
         header += " - link-out (manual check on external site)"
     lines.append(header)

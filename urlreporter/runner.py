@@ -96,7 +96,8 @@ async def run_scans(
       - {"type": "scanner_start", "scanner": name}
       - {"type": "scanner_done", "scanner": name, "ok": bool, "grade": str|None,
          "score": int|None, "elapsed": float, "completed": k, "total": N,
-         "error": str|None}
+         "error": str|None, "link": str, "summary": str,
+         "not_applicable": bool, "result": ScanResult}
       - {"type": "done", "total": N}
     """
     scanners = _build_scanners(cfg)
@@ -171,6 +172,7 @@ async def run_scans(
                         "error": result.error,
                         "link": result.link,
                         "summary": result.summary,
+                        "not_applicable": result.not_applicable,
                         # Pass the full dataclass so listeners can persist partial
                         # state (e.g. write a partial markdown report after each
                         # scanner finishes, so a server crash mid-scan still

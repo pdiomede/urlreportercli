@@ -117,6 +117,7 @@ class CAAScanner:
                     ),
                 )],
                 link=link,
+                not_applicable=True,
             )
 
         records: list[str] = []

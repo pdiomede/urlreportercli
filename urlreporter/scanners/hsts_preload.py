@@ -52,6 +52,7 @@ class HSTSPreloadScanner:
                     ),
                 )],
                 link="https://hstspreload.org/",
+                not_applicable=True,
             )
 
         try:

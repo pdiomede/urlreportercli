@@ -21,10 +21,13 @@ REPORT_URL = "https://stat.ripe.net/resource/{resource}"
 # rate-limit conversation, if one ever happens, has a name to start from.
 SOURCEAPP = "urlreporter"
 
-# A site behind a CDN usually resolves to several addresses in one prefix.
-# Checking every one would multiply RIPEstat calls for no new information, and
-# checking only one could miss a second prefix with a different status.
-MAX_ADDRESSES_PER_FAMILY = 2
+# Every address is checked up to this many per family. The cap used to be 2,
+# applied in DoH's answer order, which rotates: yahoo.com publishes 6 A and 6
+# AAAA records, and five scans in a row reported four different sets of
+# routes. Large sites spread addresses over several prefixes and networks, so
+# a sample is not the site. Past the cap, the lowest addresses are kept (so
+# repeat scans agree) and the summary says how many went unchecked.
+MAX_ADDRESSES_PER_FAMILY = 8
 
 _INVALID_DETAIL = {
     "invalid_asn": (
@@ -43,6 +46,24 @@ _INVALID_DETAIL = {
 
 class _LookupError(Exception):
     """One lookup in the chain failed; the message is ready for ScanResult.error."""
+
+
+async def _gather(*aws):
+    """`asyncio.gather` that cancels the siblings when one child fails.
+
+    A bare gather raises on the first failure and leaves the rest running.
+    The scanner then returned its error while those lookups kept retrying (up
+    to 31s of backoff each) on the shared client that run_scans closes as soon
+    as every scanner has reported.
+    """
+    tasks = [asyncio.ensure_future(a) for a in aws]
+    try:
+        return await asyncio.gather(*tasks)
+    except BaseException:
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
 
 
 @dataclass
@@ -85,8 +106,9 @@ class RPKIScanner:
                 # Unlike CAA, DNSSEC or email auth, RPKI is a property of the
                 # route to an address, so an IP target is checked as-is.
                 addresses = [str(ipaddress.ip_address(host.strip("[]")))]
+                total = 1
             else:
-                addresses = await self._resolve(host, client)
+                addresses, total = await self._resolve(host, client)
         except _LookupError as e:
             return ScanResult(scanner=self.name, ok=False, error=str(e),
                               link="https://stat.ripe.net/")
@@ -105,13 +127,14 @@ class RPKIScanner:
                     ),
                 )],
                 link="https://stat.ripe.net/",
+                not_applicable=True,
             )
 
         link = REPORT_URL.format(resource=addresses[0])
         try:
             routes, unrouted = await self._routes(addresses, client)
             if routes:
-                await asyncio.gather(
+                await _gather(
                     *(self._validate(r, client) for r in routes),
                     self._name_holders(routes, client),
                 )
@@ -119,28 +142,36 @@ class RPKIScanner:
             return ScanResult(scanner=self.name, ok=False, error=str(e), link=link)
 
         if not routes:
+            one = len(unrouted) == 1
             return ScanResult(
                 scanner=self.name, ok=True, grade=None, score=None,
                 summary=(
-                    f"Skipped: {', '.join(unrouted)} is not announced in public "
-                    "BGP, so there is no route to validate."
+                    f"Skipped: {', '.join(unrouted)} {'is' if one else 'are'} not "
+                    "announced in public BGP, so there is no route to validate."
                 ),
                 findings=[Finding(
                     severity="info",
-                    title="Address not visible in public BGP",
+                    title=f"{'Address' if one else 'Addresses'} not visible in public BGP",
                     detail=(
-                        "RIPEstat sees no announcement covering this address. That "
-                        "is normal for private or reserved ranges, and means RPKI "
+                        f"RIPEstat sees no announcement covering {'this address' if one else 'these addresses'}. "
+                        "That is normal for private or reserved ranges, and means RPKI "
                         "has nothing to check. Excluded from the overall score."
                     ),
                 )],
                 link=link,
+                not_applicable=True,
             )
 
-        return self._grade(routes, unrouted, link)
+        result = self._grade(routes, unrouted, link)
+        if total > len(addresses):
+            result.summary += (
+                f" Checked {len(addresses)} of the {total} addresses {host} resolves to."
+            )
+        return result
 
-    async def _resolve(self, host: str, client: httpx.AsyncClient) -> list[str]:
-        """A and AAAA addresses for `host` through Cloudflare DoH.
+    async def _resolve(self, host: str, client: httpx.AsyncClient) -> tuple[list[str], int]:
+        """A and AAAA addresses for `host` through Cloudflare DoH, plus how
+        many there were before the per-family cap.
 
         DoH follows CNAME chains itself and returns the final records in the
         same answer, so filtering on record type is enough.
@@ -175,17 +206,21 @@ class RPKIScanner:
                     f"Cloudflare DoH returned RCODE {rcode} for the {rtype} "
                     f"lookup of {host}."
                 )
-            found: list[str] = []
+            found: set[ipaddress.IPv4Address | ipaddress.IPv6Address] = set()
             for a in data.get("Answer") or []:
                 if a.get("type") != code:
                     continue
-                addr = (a.get("data") or "").strip()
-                if addr and addr not in found:
-                    found.append(addr)
-            return found[:MAX_ADDRESSES_PER_FAMILY]
+                try:
+                    found.add(ipaddress.ip_address((a.get("data") or "").strip()))
+                except ValueError:
+                    continue
+            # Sorted, so the same records give the same report whatever order
+            # the resolver rotated them into.
+            return [str(a) for a in sorted(found)]
 
-        v4, v6 = await asyncio.gather(one("A", 1), one("AAAA", 28))
-        return v4 + v6
+        v4, v6 = await _gather(one("A", 1), one("AAAA", 28))
+        checked = v4[:MAX_ADDRESSES_PER_FAMILY] + v6[:MAX_ADDRESSES_PER_FAMILY]
+        return checked, len(v4) + len(v6)
 
     async def _ripestat(self, call: str, params: dict[str, str],
                         client: httpx.AsyncClient) -> dict:
@@ -218,7 +253,7 @@ class RPKIScanner:
     async def _routes(self, addresses: list[str],
                       client: httpx.AsyncClient) -> tuple[list[_Route], list[str]]:
         """Group addresses by (announced prefix, origin AS)."""
-        infos = await asyncio.gather(
+        infos = await _gather(
             *(self._ripestat("network-info", {"resource": a}, client) for a in addresses)
         )
         routes: dict[tuple[str, str], _Route] = {}
@@ -258,7 +293,7 @@ class RPKIScanner:
                 return None
             return (data.get("holder") or "").strip() or None
 
-        names = dict(zip(asns, await asyncio.gather(*(holder(a) for a in asns))))
+        names = dict(zip(asns, await _gather(*(holder(a) for a in asns))))
         for r in routes:
             r.holder = names.get(r.origin)
 
@@ -285,21 +320,32 @@ class RPKIScanner:
                     "be hijacked."
                 ),
             ))
+        # One finding per announcing network, like the valid ones below: the
+        # remedy is the same request to the same operator, and a site with a
+        # dozen addresses would otherwise fill the recommendations with
+        # near-identical lines.
+        unknown_by_network: dict[str, list[_Route]] = {}
         for r in unknown:
+            unknown_by_network.setdefault(r.origin, []).append(r)
+        for origin, group in unknown_by_network.items():
+            prefixes = ", ".join(r.prefix for r in group)
+            addresses = ", ".join(a for r in group for a in r.addresses)
+            one = len(group) == 1
             findings.append(Finding(
                 severity="medium",
-                title=f"No ROA for {r.prefix} ({_who(r)})",
+                title=f"No ROA for {prefixes} ({_who(group[0])})",
                 detail=(
-                    f"Nothing authorises which network may announce {r.prefix}, so "
-                    "a hijacked announcement of it would not be rejected by networks "
-                    f"that enforce route origin validation. Affects {', '.join(r.addresses)}. "
-                    "This address space usually belongs to the hosting provider or "
-                    "network, not to the site's owner."
+                    f"Nothing authorises which network may announce {prefixes}, so "
+                    f"a hijacked announcement of {'it' if one else 'them'} would not "
+                    "be rejected by networks that enforce route origin validation. "
+                    f"Affects {addresses}. This address space usually belongs to the "
+                    "hosting provider or network, not to the site's owner."
                 ),
                 recommendation=(
-                    f"Ask the operator of AS{r.origin} to publish a ROA for "
-                    f"{r.prefix} at their regional internet registry. If you hold "
-                    "the address space yourself, create the ROA in your RIR portal."
+                    f"Ask the operator of AS{origin} to publish "
+                    f"{'a ROA' if one else 'ROAs'} for {prefixes} at their regional "
+                    "internet registry. If you hold the address space yourself, "
+                    "create the ROA in your RIR portal."
                 ),
             ))
         if valid:
@@ -317,10 +363,14 @@ class RPKIScanner:
                 ),
             ))
         if unrouted:
+            one = len(unrouted) == 1
             findings.append(Finding(
                 severity="info",
                 title=f"Not in public BGP: {', '.join(unrouted)}",
-                detail="No announcement covers these addresses, so RPKI has nothing to check for them.",
+                detail=(
+                    f"No announcement covers {'this address' if one else 'these addresses'}, "
+                    f"so RPKI has nothing to check for {'it' if one else 'them'}."
+                ),
             ))
 
         def share(part: list[_Route]) -> str:

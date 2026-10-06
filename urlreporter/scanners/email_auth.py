@@ -235,6 +235,7 @@ class EmailAuthScanner:
                     ),
                 )],
                 link=link,
+                not_applicable=True,
             )
         apex = parents[-1]
         is_subdomain = len(parents) >= 2
@@ -365,6 +366,7 @@ class EmailAuthScanner:
                     ),
                 )],
                 link=link,
+                not_applicable=True,
             )
 
         # ---- Score (same scoring math as before, against the records we found) ----
