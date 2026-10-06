@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 import httpx
@@ -80,6 +80,16 @@ def _parse(text: str) -> dict[str, list[str]]:
             continue
         fields.setdefault(key, []).append(val)
     return fields
+
+
+# RFC 9116 section 2.5.5: an Expires "less than a year into the future".
+MAX_EXPIRES_DAYS = 365
+
+
+def _example_expires() -> str:
+    """An Expires value for advice text: inside the recommended year, and
+    never in the past. A hardcoded 2027-01-01 would have gone stale."""
+    return f"{datetime.now(timezone.utc) + timedelta(days=330):%Y-%m-%d}T00:00:00Z"
 
 
 def _parse_iso_datetime(raw: str) -> datetime | None:
@@ -273,7 +283,7 @@ class SecurityTxtScanner:
                 severity="medium",
                 title="security.txt has no Expires field",
                 detail="Required by RFC 9116. Helps researchers know whether the file is still trustworthy.",
-                recommendation="Add an `Expires:` line in ISO-8601 UTC, e.g. `Expires: 2027-01-01T00:00:00Z`.",
+                recommendation=f"Add an `Expires:` line in ISO-8601 UTC, e.g. `Expires: {_example_expires()}`.",
             ))
         elif expires_dt is None:
             findings.append(Finding(
@@ -297,6 +307,21 @@ class SecurityTxtScanner:
                     title="security.txt expires within 30 days",
                     detail=f"Expires {expires_dt.isoformat()}.",
                     recommendation="Renew before expiry; RFC 9116 recommends rotating annually at minimum.",
+                ))
+            elif expires_dt - now > timedelta(days=MAX_EXPIRES_DAYS):
+                # No points: the file is valid, just at risk of going stale.
+                findings.append(Finding(
+                    severity="low",
+                    title="security.txt Expires is more than a year away",
+                    detail=(
+                        f"Expires {expires_dt.date().isoformat()}, {(expires_dt - now).days} days "
+                        "from now. RFC 9116 recommends less than a year, so the file is "
+                        "reviewed at least once a year."
+                    ),
+                    recommendation=(
+                        f"Set `Expires:` within the next year, e.g. `Expires: {_example_expires()}`, "
+                        "and renew it before then."
+                    ),
                 ))
 
         # Detect totally unknown field names (typos / non-RFC fields).

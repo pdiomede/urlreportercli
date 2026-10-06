@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote, urlparse
@@ -37,6 +38,18 @@ LOOKBACK_DAYS = 90
 # stall like that cost a second 20s timeout, so one scan took 40s.
 CRTSH_BACKOFFS: tuple[float, ...] = (3.0,)
 CRTSH_TIMEOUT = 20.0
+
+# After crt.sh fails, scans ask CertSpotter first for this long. Even one
+# quick retry costs a scan 4s against a 502 and 20s against a stall, and
+# crt.sh outages last hours, so every scan in the web app paid it again.
+# Process memory, so it only helps the web app; a CLI run is a fresh process.
+CRTSH_REST_SECONDS = 600.0
+_crtsh_failed_at: float | None = None
+
+
+def _crtsh_resting() -> bool:
+    return (_crtsh_failed_at is not None
+            and time.monotonic() - _crtsh_failed_at < CRTSH_REST_SECONDS)
 
 _ORG_RE = re.compile(r'(?:^|,\s*)O=(?:"([^"]*)"|([^,]*))')
 
@@ -97,34 +110,44 @@ class CrtShScanner:
             )
         link = CRTSH_REPORT.format(host=quote(host, safe=""))
 
-        certs: list[dict[str, Any]] | None = None
-        source = "crt.sh"
-        try:
-            certs = await _fetch_crtsh(host, client)
-        except _SourceFailed as e:
-            log.warning("crt.sh failed for %s, falling back to CertSpotter: %s", host, e)
+        global _crtsh_failed_at
+        # crt.sh first, unless it failed recently. Either way the other source
+        # is still asked when the first one fails, so resting crt.sh never
+        # turns a CertSpotter hiccup into a link-out.
+        resting = _crtsh_resting()
+        sources = [("crt.sh", _fetch_crtsh), ("CertSpotter", _fetch_certspotter)]
+        if resting:
+            sources.reverse()
+        errors: list[str] = []
+        for source, fetch in sources:
             try:
-                certs = await _fetch_certspotter(host, client)
-                source = "CertSpotter"
-            except _SourceFailed as e2:
-                log.error("Both CT sources failed for %s: crt.sh=%s; certspotter=%s", host, e, e2)
-                # Both upstreams down — degrade to link-out so the row doesn't
-                # show as an ERROR (it's a third-party flake, not a problem
-                # with the user's site).
-                return ScanResult(
-                    scanner=self.name,
-                    ok=True,
-                    grade=None,
-                    score=None,
-                    summary=(
-                        "CT lookup unavailable: crt.sh and CertSpotter both unreachable. "
-                        "Open the link to inspect Certificate Transparency manually."
-                    ),
-                    findings=[],
-                    link=link,
-                )
+                certs = await fetch(host, client)
+            except _SourceFailed as e:
+                if source == "crt.sh":
+                    _crtsh_failed_at = time.monotonic()
+                log.warning("%s failed for %s: %s", source, host, e)
+                errors.append(f"{source}={e}")
+                continue
+            if source == "crt.sh":
+                _crtsh_failed_at = None
+            return _grade(certs, link=link, source=source, crtsh_skipped=resting)
 
-        return _grade(certs, link=link, source=source)
+        log.error("Both CT sources failed for %s: %s", host, "; ".join(errors))
+        # Both upstreams down — degrade to link-out so the row doesn't
+        # show as an ERROR (it's a third-party flake, not a problem
+        # with the user's site).
+        return ScanResult(
+            scanner=self.name,
+            ok=True,
+            grade=None,
+            score=None,
+            summary=(
+                "CT lookup unavailable: crt.sh and CertSpotter both unreachable. "
+                "Open the link to inspect Certificate Transparency manually."
+            ),
+            findings=[],
+            link=link,
+        )
 
 
 class _SourceFailed(Exception):
@@ -233,6 +256,7 @@ def _grade(
     *,
     link: str,
     source: str,
+    crtsh_skipped: bool = False,
 ) -> ScanResult:
     """Apply the same grading model regardless of which source produced the data.
 
@@ -284,7 +308,8 @@ def _grade(
         ))
         return ScanResult(
             scanner=CrtShScanner.name, ok=True, grade="D", score=40,
-            summary=_with_source("No certificates found in Certificate Transparency logs.", source),
+            summary=_with_source("No certificates found in Certificate Transparency logs.", source,
+                                 crtsh_skipped=crtsh_skipped),
             findings=findings, link=link,
         )
 
@@ -347,12 +372,12 @@ def _grade(
 
     return ScanResult(
         scanner=CrtShScanner.name, ok=True, grade=grade, score=score,
-        summary=_with_source(summary, source),
+        summary=_with_source(summary, source, crtsh_skipped=crtsh_skipped),
         findings=findings, link=link,
     )
 
 
-def _with_source(summary: str, source: str) -> str:
+def _with_source(summary: str, source: str, *, crtsh_skipped: bool = False) -> str:
     """Append a provenance suffix to the summary when CertSpotter served the data.
 
     The full retry trace from ``retry_request`` already lands in the per-run
@@ -362,4 +387,6 @@ def _with_source(summary: str, source: str) -> str:
     """
     if source == "crt.sh":
         return summary
+    if crtsh_skipped:
+        return f"{summary} (via CertSpotter — crt.sh skipped after a recent failure)"
     return f"{summary} (via CertSpotter — crt.sh unreachable)"

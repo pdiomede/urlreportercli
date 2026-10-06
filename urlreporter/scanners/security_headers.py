@@ -65,8 +65,10 @@ class SecurityHeadersScanner:
         # gated). The direct fetch doesn't depend on the grade fetch's result,
         # so fire them concurrently. Wall time becomes max(call) instead of
         # sum(call) — saves roughly half the scanner's time on a healthy run.
-        async def _fetch_grade() -> tuple[str | None, str | None]:
-            """Returns (grade, error_message). At most one is set."""
+        async def _fetch_grade() -> tuple[str | None, str | None, str | None]:
+            """Returns (grade, error, why). Either grade is set, or error (the
+            detail, for the log and ScanResult.error) and why (the short
+            reason the summary gives for grading locally)."""
             try:
                 resp = await retry_request(
                     lambda: client.get(
@@ -78,15 +80,26 @@ class SecurityHeadersScanner:
                 )
             except RetryExhausted as e:
                 log.error("%s: %s", self.name, e)
-                return None, str(e)
+                why = (f"securityheaders.com answered HTTP {e.status_code}"
+                       if e.status_code is not None else "securityheaders.com was unreachable")
+                return None, str(e), why
             except httpx.HTTPError as e:
-                return None, describe_exc(e)
+                return None, describe_exc(e), "securityheaders.com was unreachable"
             raw = resp.headers.get("X-Grade") or resp.headers.get("x-grade")
             if raw is not None:
                 normalized = raw.strip().upper()
                 if _GRADE_RE.match(normalized):
-                    return normalized, None
-                return None, raw.strip()
+                    return normalized, None, None
+                return None, raw.strip(), "securityheaders.com returned no grade"
+            # Every scan ended here and called the site "unreachable", but it
+            # answers: Cloudflare's bot protection turns non-browser clients
+            # away with a 403 and `cf-mitigated: challenge`.
+            if resp.status_code >= 400:
+                if resp.headers.get("cf-mitigated", "").lower() == "challenge":
+                    why = f"securityheaders.com blocks automated requests (HTTP {resp.status_code})"
+                else:
+                    why = f"securityheaders.com refused the request (HTTP {resp.status_code})"
+                return None, f"HTTP {resp.status_code}", why
             # X-Grade header gone — parse grade from HTML body.
             m = re.search(
                 r'class="score".*?<span[^>]*>([A-F][+\-]?)</span>',
@@ -94,8 +107,8 @@ class SecurityHeadersScanner:
                 re.DOTALL,
             )
             if m and _GRADE_RE.match(m.group(1).upper()):
-                return m.group(1).upper(), None
-            return None, "No X-Grade header in response."
+                return m.group(1).upper(), None, None
+            return None, "No X-Grade header in response.", "securityheaders.com returned no grade"
 
         async def _fetch_target() -> httpx.Response | None:
             try:
@@ -107,7 +120,7 @@ class SecurityHeadersScanner:
                 log.warning("%s: direct fetch failed: %s", self.name, describe_exc(e))
                 return None
 
-        (grade, grade_error), target_resp = await asyncio.gather(
+        (grade, grade_error, why_local), target_resp = await asyncio.gather(
             _fetch_grade(), _fetch_target()
         )
 
@@ -143,10 +156,7 @@ class SecurityHeadersScanner:
         elif synth_score is not None:
             grade = score_to_letter(synth_score)
             score = synth_score
-            summary = (
-                f"Headers grade {grade} ({synth_score}/100) — graded locally; "
-                "securityheaders.com unreachable."
-            )
+            summary = f"Headers grade {grade} ({synth_score}/100), graded locally because {why_local}."
             ok = True
             error = None
         else:

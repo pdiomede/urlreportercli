@@ -44,6 +44,17 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   instead. SPF softfail (`~all`, 7 points) is now low severity rather than
   informational, and a CAA record with no `issue` directive (graded C) gets a
   medium finding, so neither drops out of the list.
+- **securityheaders.com was called "unreachable" on every scan.** It is
+  reachable: Cloudflare's bot protection answers non-browser clients with
+  HTTP 403 and `cf-mitigated: challenge`, so the scanner always grades the
+  headers itself. The summary now gives the actual reason, e.g. "graded
+  locally because securityheaders.com blocks automated requests (HTTP 403)",
+  and keeps "unreachable" for a real network failure.
+- **security.txt now flags an `Expires` more than a year ahead.** RFC 9116
+  recommends under a year; it is a low finding and costs no points. The
+  advice for a missing `Expires` also suggested `2027-01-01T00:00:00Z`, which
+  would itself be expired from 2027; the example is now always inside the
+  coming year.
 - **security.txt lost points without saying why.** The optional Policy (+5),
   Encryption (+4) and Acknowledgments (+3) fields were scored silently; a new
   low-severity finding names whichever are missing, and its example line is for one of
