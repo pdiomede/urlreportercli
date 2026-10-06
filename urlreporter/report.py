@@ -6,6 +6,7 @@ import textwrap
 
 from .runner import Report
 from .scanners.base import ScanResult
+from .scanners.ssllabs import SSLLABS_ERROR_PREFIX
 
 _URL_RE = re.compile(r"https?://[^\s<>\"')]+[^\s<>\"'),.;:!?]")
 
@@ -269,6 +270,18 @@ def explain_error(result: ScanResult, log_path: str | None = None) -> dict[str, 
                 "SSL_LABS_USE_CACHE=true, the second run on the same host typically "
                 "completes in seconds because SSL Labs serves the cached result. "
                 "Retry, or scan with --only excluding ssl_labs."
+            ),
+        }
+
+    if result.scanner == "SSL Labs" and err.startswith(SSLLABS_ERROR_PREFIX):
+        reason = err[len(SSLLABS_ERROR_PREFIX):].rstrip(".")
+        return {
+            "title": "SSL Labs could not assess your site",
+            "body": (
+                f"SSL Labs answered, but its test of the site failed: {reason}. Usual "
+                "causes are nothing listening on port 443, a hostname SSL Labs cannot "
+                "resolve, or a firewall that blocks its test servers. Check that the site "
+                "loads over HTTPS from outside your network, then scan again."
             ),
         }
 

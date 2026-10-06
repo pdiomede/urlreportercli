@@ -37,6 +37,9 @@ MAX_TRANSIENT_RETRIES = 3
 TRANSIENT_BACKOFFS = [5, 15, 30]  # seconds; len == MAX_TRANSIENT_RETRIES
 
 
+# Start of the error for an assessment SSL Labs itself ended in ERROR.
+SSLLABS_ERROR_PREFIX = "SSL Labs could not assess this site: "
+
 class SSLLabsScanner:
     name = "SSL Labs"
     config_key = "ssl_labs"
@@ -103,8 +106,12 @@ class SSLLabsScanner:
                 if status == "READY":
                     break
                 if status == "ERROR":
-                    msg = data.get("statusMessage") or "SSL Labs reported ERROR"
-                    return ScanResult(scanner=self.name, ok=False, error=msg, link=link)
+                    # Named as SSL Labs' own verdict: the bare statusMessage
+                    # ("Unable to connect to the server") matched nothing in
+                    # explain_error and was put down to a fault in Url Reporter.
+                    msg = data.get("statusMessage") or "no reason given"
+                    return ScanResult(scanner=self.name, ok=False,
+                                      error=f"{SSLLABS_ERROR_PREFIX}{msg}", link=link)
                 if asyncio.get_running_loop().time() > deadline:
                     # SSL Labs is still polling (status IN_PROGRESS / DNS) when
                     # the deadline expired. The target site is fine — SSL Labs

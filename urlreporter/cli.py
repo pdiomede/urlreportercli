@@ -333,10 +333,14 @@ def scan(url: str, config_path: Path | None, out_path: Path | None, quiet: bool,
 
     host = urlparse(target).hostname or "host"
     if out_path is None:
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        # UTC, as the report itself is: local time put the user's UTC offset
+        # between the filename and the "Generated ... UTC" line inside.
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         out_path = Path.cwd() / "reports" / f"urlreporter-{_safe_filename(host)}-{ts}.md"
     html_path = out_path.with_suffix(".html") if html_flag else None
-    if html_path is not None and html_path == out_path:
+    # Compared without case: macOS and Windows file systems ignore it, so
+    # `--out Report.HTML --html` still wrote both reports to one file.
+    if html_path is not None and str(html_path).casefold() == str(out_path).casefold():
         # `--out report.html --html` made both renderers target one path, so the
         # HTML overwrote the markdown and the CLI still printed both success
         # lines. Keep the user's path for the markdown and sidestep the HTML.

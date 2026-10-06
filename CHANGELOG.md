@@ -16,6 +16,15 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- **Three more report bugs.**
+  - When SSL Labs itself ended its assessment in an error ("Unable to
+    connect to the server"), the report called it "most likely a fault in
+    Url Reporter". The error now names SSL Labs, and the explanation gives
+    the usual causes.
+  - Default report filenames used local time, while the report inside says
+    UTC. They use UTC now.
+  - `--out Report.HTML --html` wrote both reports to one file on macOS and
+    Windows, which ignore case, and the Markdown was lost.
 - **Ten bugs in the Markdown and HTML reports.**
   - The Markdown report passed raw HTML through: `http://<host>/` lost its
     `<host>`, a recommendation mentioning `<script>` tags hid the rest of the
