@@ -43,6 +43,11 @@ the top of its own band on the ladder below:
     A  =  89   B  = 74    C  = 59    D  = 44    F/T/M   =  0
     A- =  84   B- = 69    C- = 54    D- = 39
 
+SSL Labs' T (certificate not trusted) and M (certificate does not match
+the hostname) are not steps on the scale: browsers refuse the certificate
+either way, so they count as 0 and the SSL Labs row shows F, naming the T
+or M in its summary.
+
 How scanners are combined
 -------------------------
 A weighted mean of every scanner that returned a number. Scanners that

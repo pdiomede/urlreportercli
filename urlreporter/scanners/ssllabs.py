@@ -6,11 +6,27 @@ from urllib.parse import urlparse
 
 import httpx
 
-from ..grading import letter_to_score
+from ..grading import letter_to_score, score_to_letter
 from ._retry import describe_exc
 from .base import Finding, ScanResult
 
 log = logging.getLogger(__name__)
+
+# SSL Labs' two failure grades. They are not steps on the A-F scale: browsers
+# refuse the certificate either way, so both count as 0. The row used to show
+# "T" or "M" beside that 0, a letter the overall ladder cannot produce, so a T
+# on its own came out as an overall F that the row never mentioned.
+_FAILURE_GRADES: dict[str, tuple[str, str]] = {
+    "T": (
+        "the certificate is not trusted",
+        "Serve a certificate issued by a publicly trusted CA, with the full "
+        "intermediate chain, so browsers can verify it.",
+    ),
+    "M": (
+        "the certificate does not match the hostname",
+        "Serve a certificate whose names (CN or SAN) cover this hostname.",
+    ),
+}
 
 API = "https://api.ssllabs.com/api/v3/analyze"
 REPORT_URL = "https://www.ssllabs.com/ssltest/analyze.html?d={host}"
@@ -199,7 +215,21 @@ class SSLLabsScanner:
             # Below B is worth a finding; below C- is high. Compared through
             # letter_to_score so the cut-offs follow the table, not a number.
             endpoint_score = letter_to_score(grade) if grade else None
-            if endpoint_score is not None and endpoint_score < letter_to_score("B"):
+            failure = _FAILURE_GRADES.get((grade or "").upper())
+            if failure:
+                reason, fix = failure
+                findings.append(
+                    Finding(
+                        severity="high",
+                        title=f"TLS endpoint graded {grade} ({ip}): {reason}",
+                        detail=(
+                            f"SSL Labs grades {grade} when {reason}. Browsers show a "
+                            "certificate warning instead of the site."
+                        ),
+                        recommendation=fix,
+                    )
+                )
+            elif endpoint_score is not None and endpoint_score < letter_to_score("B"):
                 findings.append(
                     Finding(
                         severity="high" if endpoint_score < letter_to_score("C-") else "medium",
@@ -232,12 +262,23 @@ class SSLLabsScanner:
                             )
                         )
 
+        grade = worst
+        summary = f"TLS grade {worst} (worst across {len(endpoints)} endpoint(s))"
+        failure = _FAILURE_GRADES.get(worst.upper())
+        if failure:
+            # Show the letter the score counts as, and name SSL Labs' own.
+            grade = score_to_letter(score)
+            summary = (
+                f"TLS grade {grade}: SSL Labs graded {worst}, {failure[0]} "
+                f"(worst across {len(endpoints)} endpoint(s))"
+            )
+
         return ScanResult(
             scanner=self.name,
             ok=True,
-            grade=worst,
+            grade=grade,
             score=score,
-            summary=f"TLS grade {worst} (worst across {len(endpoints)} endpoint(s))",
+            summary=summary,
             findings=findings,
             link=link,
         )

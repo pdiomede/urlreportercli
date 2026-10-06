@@ -76,6 +76,13 @@ number.
   overall F. The ladder now has an E rung at 30 to 34 and F starts under 30;
   `urlreporter explain-score` prints it. No scores change, only the letter for
   an average of 30 to 34.
+- **SSL Labs' T and M showed a letter the scale doesn't have.** Both count as
+  0, but the row showed "T" or "M" beside it, so a T on its own became an
+  overall F the row never mentioned. The row now shows F with SSL Labs'
+  letter and the reason in its summary ("SSL Labs graded T, the certificate
+  is not trusted"), and the endpoint finding gives certificate advice rather
+  than cipher-suite advice. `urlreporter explain-score` explains it. Scores
+  are unchanged.
 
 - **Mozilla Observatory's reason for refusing a site was thrown away.**
   Observatory answers a site it can't grade with HTTP 422 and a reason such as
