@@ -35,6 +35,11 @@ class Report:
     config_files: list[str] = field(default_factory=list)
     total_elapsed: float | None = None
     registration: RegistrationInfo | None = None
+    # Scanners that were started but had not finished when this report was
+    # written: set by the incremental writers, so a report saved from an
+    # interrupted or crashed scan says it is partial instead of passing for
+    # a complete one.
+    unfinished: list[str] = field(default_factory=list)
 
 
 def _build_scanners(cfg: Config) -> list:

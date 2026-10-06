@@ -22,9 +22,9 @@ TTY, plain lines when piped). The Markdown report is written **incrementally** a
 finishes, so a `Ctrl-C` mid-scan still leaves a usable file on disk; the HTML sibling is written at
 completion, or from the latest partial report on interrupt.
 
-The tool is **passive**: every check either reads a third-party scanner's API or does a single GET
-to the target. It generates no load, sends no payloads, and requires no authorization to scan any
-public URL.
+The tool is **passive**: it reads third-party scanners' APIs and public data, and sends the target
+only a few plain GET requests (the page, its `http://` address and its security.txt). No load, no
+payloads, no authorization needed.
 
 ## Scanners
 
@@ -34,17 +34,17 @@ By default `urlreporter` queries:
 |---|---|---|
 | 1 | [SSL Labs](https://www.ssllabs.com/ssltest/) | TLS / certificate configuration (letter grade). Polls; can take 1-3 minutes on a cache miss. |
 | 2 | [Mozilla Observatory v2](https://developer.mozilla.org/en-US/observatory) | HTTP headers and best practices (score + grade). |
-| 3 | [securityheaders.com](https://securityheaders.com/) | HTTP security headers (letter grade). Now sits behind Cloudflare bot protection, so when the third-party probe gets a JS challenge, Url Reporter fetches the target&#39;s headers itself and computes a letter grade locally with a calibrated penalty table. The summary says why it was graded locally (blocked by the bot challenge, unreachable, or no grade returned). |
+| 3 | [securityheaders.com](https://securityheaders.com/) | HTTP security headers (letter grade). The site now blocks automated requests, so Url Reporter usually grades the target's headers itself, and the summary says why. |
 | 4 | [internet.nl](https://internet.nl/) | Web standards: TLS, DNSSEC, IPv6, mail. Always a **link-out**: its only API is a batch API whose terms rule out single-site scans for a tool like this. |
-| 5 | [hstspreload.org](https://hstspreload.org/) | Whether the domain is on the Chrome HSTS preload list. |
-| 6 | [crt.sh](https://crt.sh/) + [CertSpotter](https://sslmate.com/certspotter/) | Certificate Transparency: every cert ever issued, graded by how many CAs (counted per organisation, not per intermediate) issued certificates in the last 90 days, or, when nothing was issued in that window, the certificates still valid. crt.sh is the primary; falls over to CertSpotter (different operator, same CT data) when crt.sh still fails after one quick retry, or straight away if it stalls past a 20-second timeout. If both are unreachable, the row degrades to a link-out instead of a red ERROR. |
+| 5 | [hstspreload.org](https://hstspreload.org/) | Whether the scanned hostname is on the Chrome HSTS preload list. |
+| 6 | [crt.sh](https://crt.sh/) + [CertSpotter](https://sslmate.com/certspotter/) | Certificate Transparency: how many CAs (counted per organisation) issued certificates in the last 90 days, or the still-valid ones if none were. CertSpotter is the fallback when crt.sh fails or stalls. If both are down, the row is a link-out. |
 | 7 | CAA records (via Cloudflare DoH) | DNS-level pin on which CAs may issue certs for the domain (walks up to inherited records). |
-| 8 | DNSSEC (via Cloudflare DoH) | Whether the zone is signed and validates to the root (`AD` flag). |
+| 8 | DNSSEC (via Cloudflare DoH, Google as second opinion) | Whether the zone is signed and validates to the root (`AD` flag). An unvalidated answer from Cloudflare is re-checked with Google before reporting DNSSEC as off. |
 | 9 | HTTP→HTTPS redirect | Calls `http://<host>` and walks the redirect chain; flags missing redirects, intermediate http hops, and cross-host detours. |
 | 10 | DoS posture (passive) | Detects CDN/WAF in front, edge-cacheable responses, and rate-limit headers. **Generates no load**; active load testing is out of scope. |
 | 11 | Email auth (SPF / DMARC / DKIM) | TXT lookups via Cloudflare DoH for SPF on the apex, DMARC on `_dmarc.<host>`, and DKIM probed across 10 common selectors. Scores by policy strictness (`-all` > `~all` > `+all`; `p=reject` > `p=quarantine` > `p=none`). |
-| 12 | security.txt (RFC 9116) | Fetches `/.well-known/security.txt` (then `/security.txt` as legacy fallback), parses it, and grades on canonical-location compliance, `Contact:` presence, and a parseable, future-dated `Expires:` field. The optional `Policy`, `Encryption`, `Acknowledgments` and `Preferred-Languages` fields add a few points each, and a finding names whichever are missing. An `Expires:` more than a year ahead gets a low finding (RFC 9116 recommends under a year) but costs no points. |
-| 13 | RPKI route origin (via [RIPEstat](https://stat.ripe.net/)) | Resolves the site's IPv4 and IPv6 addresses (every one, up to 8 per family) through Cloudflare DoH, looks up which prefix and network announce each in BGP, and checks whether a signed ROA authorises that pair. `valid` is A+, no ROA is a B (much address space has none, and it is usually the host's to fix), `invalid` is a critical F. Applies to IP-literal targets too. Every finding names the announcing network. |
+| 12 | security.txt (RFC 9116) | Fetches `/.well-known/security.txt` (then the legacy `/security.txt`) and grades the location, `Contact:` and a future `Expires:`. Optional fields add a few points each, and findings name what is missing. An `Expires:` more than a year ahead is flagged but costs nothing. |
+| 13 | RPKI route origin (via [RIPEstat](https://stat.ripe.net/)) | Checks that each of the site's addresses (up to 8 per family) is announced in BGP by a network a signed ROA authorises. `valid` is A+, no ROA is a B (usually the host's to fix), `invalid` is a critical F. Works on IP targets too. |
 
 Failed scanners are isolated: one timing out, erroring, or returning garbage does not stop the
 others. Every outbound HTTP call retries on transient errors (5xx, 429, network timeouts) before
@@ -113,8 +113,7 @@ styles plus a print stylesheet, so it prints or exports to PDF cleanly) is writt
 `.md` with the same basename.
 
 The `.md` file is re-rendered after every scanner finishes, so it is always current with whatever
-has completed. The `.html` sibling is rendered once at the end — full inline-CSS HTML is too
-expensive to rewrite on every scanner, and nothing reads it mid-scan.
+has completed. The `.html` sibling is rendered once at the end: nothing reads it mid-scan.
 
 "Top recommendations" lists only findings that need action; informational ones ("SPF policy is
 hardfail") stay in each scanner's own section.
@@ -124,8 +123,8 @@ up.
 
 ## How it works
 
-1. **`urlutil.normalize_url()`** validates and canonicalizes the input URL — the single gate every
-   scan passes through.
+1. **`urlutil.normalize_url()`** validates and canonicalizes the input URL. Every scan passes
+   through it first.
 2. **`config.load_config()`** merges the package defaults, `config.env`, `config.env.local`, and the
    process environment (in that order of increasing priority) into a `Config` describing which
    scanners are enabled and the tunables.
@@ -166,7 +165,7 @@ INTERNETNL_API_TOKEN=
 ```
 
 Booleans accept `1` / `true` / `yes` / `on`. Copy `config.env.example` to `config.env.local` for
-personal overrides and tokens — it is gitignored and takes priority over `config.env`.
+personal overrides and tokens. It is gitignored and takes priority over `config.env`.
 
 ## Logs
 
@@ -191,8 +190,8 @@ top of that letter's band (A = 89, B = 74), so every letter reads back as itself
 (untrusted certificate) and M (hostname mismatch) count as 0 and show as F. The weighted average is rounded to a whole number and mapped to a letter (90 or more is
 A+, 85 to 89 is A, and so on down to 30 to 34 is E and under 30 is F).
 
-For the full breakdown — the letter-to-number table, the weight tiers, and the honest caveats about
-the methodology — run:
+For the full breakdown (the letter-to-number table, the weight tiers, and the honest caveats about
+the methodology), run:
 
 ```bash
 urlreporter explain-score
@@ -210,7 +209,7 @@ urlreporter explain-score
 ## Security
 
 Found a security problem? Please report it privately to **security@pdiomede.com** rather than in a
-public issue. [SECURITY.md](./SECURITY.md) has the scope, what to expect, and the safe-harbour terms.
+public issue. [SECURITY.md](./SECURITY.md) has the scope, what to expect, the safe-harbour terms and the acknowledgments.
 
 ## Versioning
 

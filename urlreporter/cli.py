@@ -263,6 +263,7 @@ class _IncrementalWriter:
             recommendations=_prioritize(results),
             config_files=self.cfg_files,
             registration=self._registration,
+            unfinished=[n for n in self._scanner_order if n not in {r.scanner for r in results}],
         )
         try:
             self.md_path.parent.mkdir(parents=True, exist_ok=True)

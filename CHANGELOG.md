@@ -16,6 +16,28 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- **Ten bugs in the Markdown and HTML reports.**
+  - The Markdown report passed raw HTML through: `http://<host>/` lost its
+    `<host>`, a recommendation mentioning `<script>` tags hid the rest of the
+    report when rendered, and a site's own security.txt could put a live
+    `<img onerror>` into the file. Text is now escaped outside code spans.
+  - Printed or saved as PDF, the HTML report showed grades, scores and most
+    registration details in near-white on white, and left out every finding
+    and error explanation. Print now uses a dark palette and opens them.
+  - A report saved after Ctrl-C or a crash looked complete. It now opens
+    with "Partial report: N of M scanners did not finish (...)" and says the
+    scan stopped.
+  - In the Markdown, the advice under the tenth recommendation and later
+    broke out of the numbered list.
+  - An expired or mismatched TLS certificate was explained as a DNS or TCP
+    failure. It now says the certificate failed verification, and why.
+  - The HTML report listed only the first ten recommendations.
+  - On a phone the HTML report scrolled sideways (hidden tooltips took up
+    room, and at 320px the table overflowed), and long text such as a DKIM
+    key was cut off.
+- **The README was out of date.** It said the tool sends the target "a single
+  GET" (it sends a few) and that the HSTS check covers "the domain" (it checks
+  the hostname scanned); several long table rows were cut down.
 - **RPKI waited on a cosmetic lookup and could fail on odd JSON.** The
   operator-name lookup used the default 3/8/20s retries, so a failing
   RIPEstat `as-overview` held the RPKI result back by 31 seconds or more;

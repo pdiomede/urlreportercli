@@ -51,6 +51,8 @@ def _is_doh_error(result: ScanResult) -> bool:
     return result.scanner in _PARTLY_DOH_SCANNERS and "DoH" in (result.error or "")
 
 # Substrings that mean "we couldn't reach the host" at the network layer.
+_TLS_VERIFY_RE = re.compile(r"CERTIFICATE_VERIFY_FAILED\]?\s*(?:certificate verify failed:\s*)?([^(\n]*)")
+
 _UNREACHABLE_MARKERS = (
     "ConnectError",
     "Name or service not known",
@@ -320,6 +322,21 @@ def explain_error(result: ScanResult, log_path: str | None = None) -> dict[str, 
     status_match = _HTTP_STATUS_RE.search(err) or _RETURNED_STATUS_RE.search(err)
     if status_match:
         return _explain_http_status(result, int(status_match.group(1)), log_path=log_path)
+
+    # httpcore reports a failed TLS handshake as ConnectError, which matched
+    # the unreachable branch below: an expired certificate was explained as a
+    # DNS or TCP failure, right under an error line naming the certificate.
+    tls_match = _TLS_VERIFY_RE.search(err)
+    if _hits_target_directly(result) and tls_match:
+        reason = (tls_match.group(1) or "").strip().rstrip(".") or "the certificate was not accepted"
+        return {
+            "title": "Your site's TLS certificate failed verification",
+            "body": (
+                f"The connection stopped at the TLS handshake: {reason}. Browsers will "
+                "show visitors the same warning. Check that the certificate has not "
+                "expired, covers this hostname, and is served with its full chain."
+            ),
+        }
 
     if _hits_target_directly(result) and is_unreachable:
         return {
@@ -687,6 +704,38 @@ def _render_registration_html(reg) -> list[str]:
     return parts
 
 
+_MD_CODE_SPAN_RE = re.compile(r"(`+)(.+?)\1", re.DOTALL)
+
+
+def _md_text(value: object) -> str:
+    """Scanner or site text, safe to interpolate into the Markdown report.
+
+    Markdown passes raw HTML through, so `<` has to be escaped: advice such as
+    "redirect from http://<host>/" lost its placeholders, a recommendation
+    mentioning <script> tags swallowed the rest of the report when rendered,
+    and a site's own security.txt could put a live <img onerror> into it.
+    Code spans are left alone: scanners use them on purpose, and a backslash
+    inside one would show up literally."""
+    text = "" if value is None else str(value)
+    out: list[str] = []
+    last = 0
+    for match in _MD_CODE_SPAN_RE.finditer(text):
+        out.append(text[last:match.start()].replace("<", "\\<"))
+        out.append(match.group(0))
+        last = match.end()
+    out.append(text[last:].replace("<", "\\<"))
+    return "".join(out)
+
+
+def _md_code(value: object) -> str:
+    """`value` as one inline code span, whatever backticks it contains."""
+    text = "" if value is None else str(value)
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    fence = "`" * (longest + 1)
+    pad = " " if text.startswith("`") or text.endswith("`") else ""
+    return f"{fence}{pad}{text}{pad}{fence}"
+
+
 def _render_registration_md(reg) -> list[str]:
     """Render the Registration section for the markdown report. Empty list when no data."""
     if reg is None:
@@ -694,9 +743,11 @@ def _render_registration_md(reg) -> list[str]:
     rows: list[tuple[str, str]] = []
     if reg.registrar:
         if reg.registrar_url:
-            rows.append(("Registrar", f"[{reg.registrar}]({reg.registrar_url})"))
+            # "]" would end the link text early.
+            name = _md_text(reg.registrar).replace("]", "\\]")
+            rows.append(("Registrar", f"[{name}]({reg.registrar_url})"))
         else:
-            rows.append(("Registrar", reg.registrar))
+            rows.append(("Registrar", _md_text(reg.registrar)))
     if reg.created is not None:
         age = _format_age(reg.domain_age_days)
         rows.append(("Created", f"{_format_date(reg.created)}" + (f" ({age} old)" if age else "")))
@@ -732,7 +783,7 @@ def _render_registration_md(reg) -> list[str]:
         rows.append(("DNSSEC at registry", "Unsigned"))
     if reg.name_servers:
         ns_count = len(reg.name_servers)
-        ns = ", ".join(reg.name_servers[:4])
+        ns = _md_text(", ".join(reg.name_servers[:4]))
         if ns_count > 4:
             ns += f", +{ns_count - 4} more"
         if ns_count == 1:
@@ -743,7 +794,7 @@ def _render_registration_md(reg) -> list[str]:
             ns_state = "above typical"
         rows.append(("Name servers", f"{ns} ({ns_count}, {ns_state})"))
     if reg.registrant_country:
-        rows.append(("Registrant country", reg.registrant_country))
+        rows.append(("Registrant country", _md_text(reg.registrant_country)))
     if not rows:
         return []
     out: list[str] = []
@@ -774,6 +825,23 @@ def _linkify_html(text: str | None) -> str:
     return "".join(out)
 
 
+def _partial_note(report: Report) -> str | None:
+    """The sentence a partial report opens with, or None for a complete one."""
+    if not report.unfinished:
+        return None
+    total = len(report.results) + len(report.unfinished)
+    return (
+        f"Partial report: {len(report.unfinished)} of {total} scanners did not finish "
+        f"({', '.join(report.unfinished)}), so the grade covers only the ones that did."
+    )
+
+
+def _elapsed_line(report: Report) -> str:
+    # "completed" only when it did: an interrupted scan stopped.
+    verb = "stopped after" if report.unfinished else "completed in"
+    return f"Scan {verb} {int(round(report.total_elapsed or 0))}s."
+
+
 def render_summary(report: Report, log_path: str | None = None) -> str:
     """Short text block - used for stdout in the CLI and inline preview on the web page."""
     lines: list[str] = []
@@ -792,6 +860,8 @@ def render_summary(report: Report, log_path: str | None = None) -> str:
         lines.append("Overall: no graded scanners returned a score.")
     else:
         lines.append(f"Overall: {report.overall_grade} ({report.overall_score}/100)")
+    if _partial_note(report):
+        lines.append(_partial_note(report))
     # Mirror the result page's "Scanners ok" KPI so the raw text summary
     # matches what the user sees on screen. Treats link-out scanners as ok
     # (they ran successfully, just without a number) - same as the KPI tile.
@@ -849,6 +919,9 @@ def render_markdown(report: Report, log_path: str | None = None) -> str:
 
     out.append("## Overall")
     out.append("")
+    if _partial_note(report):
+        out.append(f"> **{_partial_note(report)}**")
+        out.append("")
     if report.overall_score is None:
         out.append("No graded scanners returned a score for this run.")
     else:
@@ -874,7 +947,7 @@ def render_markdown(report: Report, log_path: str | None = None) -> str:
         out.append("Aggregated from " + "; ".join(parts) + ".")
     if report.total_elapsed is not None:
         out.append("")
-        out.append(f"_Scan completed in {int(round(report.total_elapsed))}s._")
+        out.append(f"_{_elapsed_line(report)}_")
     out.append("")
 
     out.append("## Top recommendations")
@@ -888,12 +961,16 @@ def render_markdown(report: Report, log_path: str | None = None) -> str:
             out.append("_No scanner completed, so there are no findings to act on._")
     else:
         for i, (finding, source) in enumerate(report.recommendations, start=1):
-            line = f"{i}. **[{finding.severity}]** {finding.title} - *{source}*"
+            line = f"{i}. **[{finding.severity}]** {_md_text(finding.title)} - *{source}*"
             out.append(line)
+            # Indented to the item's own content: a fixed 3 spaces fell short
+            # of "10. ", so from the tenth item on the advice broke out of the
+            # list and the numbering restarted.
+            indent = " " * len(f"{i}. ")
             if finding.recommendation:
-                out.append(f"   - {finding.recommendation}")
+                out.append(f"{indent}- {_md_text(finding.recommendation)}")
             elif finding.detail:
-                out.append(f"   - {finding.detail}")
+                out.append(f"{indent}- {_md_text(finding.detail)}")
     out.append("")
 
     out.append("## Per-scanner results")
@@ -1046,7 +1123,11 @@ h2 {
 /* At 375px the scanner table was ~450px wide and the whole report scrolled
    sideways; long names, summaries and error text now wrap instead. */
 @media (max-width: 600px) {
-  th, td { padding-left: 10px; padding-right: 10px; }
+  /* At 320px the letter-spaced headers alone needed 315px of the 256px the
+     32px page padding left, so the page still scrolled sideways. */
+  .wrap { padding-left: 16px; padding-right: 16px; }
+  th { letter-spacing: 0.04em; }
+  th, td { padding-left: 8px; padding-right: 8px; }
   td { overflow-wrap: anywhere; }
 }
 .reg-cell {
@@ -1101,14 +1182,15 @@ h2 {
   text-transform: none;
   letter-spacing: normal;
   white-space: normal;
-  opacity: 0;
+  /* display, not opacity: an invisible bubble still counted toward the page
+     width, so the report scrolled sideways at every size up to 1000px. */
+  display: none;
   pointer-events: none;
-  transition: opacity 140ms;
   z-index: 5;
   box-shadow: 0 12px 24px -10px rgba(0, 0, 0, 0.6);
 }
 .reg-info:hover .reg-info-tip,
-.reg-info:focus-visible .reg-info-tip { opacity: 1; }
+.reg-info:focus-visible .reg-info-tip { display: block; }
 .reg-value {
   font-size: 15px;
   font-weight: 500;
@@ -1145,6 +1227,14 @@ h2 {
   margin-right: 6px;
 }
 
+.partial-note {
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border-left: 3px solid var(--warn);
+  background: rgba(255, 180, 84, 0.08);
+  color: var(--warn);
+  font-weight: 600;
+}
 .overall-card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -1242,6 +1332,7 @@ a:hover { color: var(--accent); border-bottom-color: var(--accent); }
 }
 .recommendations li {
   counter-increment: rec;
+  overflow-wrap: anywhere;
   padding: 16px 0 16px 56px;
   border-bottom: 1px solid var(--border);
   position: relative;
@@ -1311,7 +1402,9 @@ a:hover { color: var(--accent); border-bottom-color: var(--accent); }
 }
 .findings summary .count { color: var(--faint); margin-left: 8px; font-weight: 500; }
 .findings ul { list-style: none; padding: 0 18px 16px; margin: 0; }
-.findings ul li { padding: 14px 0; border-bottom: 1px solid var(--border); font-size: 15px; }
+/* overflow-wrap: a DKIM key or a long URL has no break points, and the
+   rounded box clips its overflow, so the end of it was cut off. */
+.findings ul li { padding: 14px 0; border-bottom: 1px solid var(--border); font-size: 15px; overflow-wrap: anywhere; }
 .findings ul li:last-child { border-bottom: 0; }
 .findings ul li strong { font-size: 15.5px; }
 
@@ -1370,6 +1463,21 @@ footer {
 
 /* Print: switch to a clean light layout. */
 @media print {
+  /* Paper palette. Rules such as td:nth-child(2) and the registration
+     values set var(--text) and out-rank the plain `td` print rule below, so
+     grades, scores and registrar details printed near-white on white.
+     Redefining the variables reaches every rule that uses them. */
+  :root {
+    --bg: #fff; --surface: #fff; --raised: #f4f4f4;
+    --border: #ddd; --border-strong: #ccc;
+    --text: #111; --mute: #555; --faint: #666;
+    --accent: #0a4a8c; --accent2: #0a4a8c; --accent3: #5b3a9e;
+    --good: #2a8c5a; --warn: #b87a16; --bad: #b8323c;
+  }
+  /* Closed <details> print closed, which left out every finding and every
+     error explanation. This opens them in browsers that support
+     ::details-content; a beforeprint script opens them in the rest. */
+  details::details-content { content-visibility: visible; display: block; }
   body::before { display: none; }
   body { background: #ffffff; color: #111; }
   .wrap { max-width: none; padding: 0; }
@@ -1433,6 +1541,8 @@ def render_html(report: Report, log_path: str | None = None) -> str:
 
     # Overall card
     parts.append("<section><div class='overall-card'>")
+    if _partial_note(report):
+        parts.append(f"<p class='partial-note'>{_esc(_partial_note(report))}</p>")
     if report.overall_score is None:
         parts.append("<p class='grade-unknown'>No graded scanners returned a score for this run.</p>")
     else:
@@ -1465,10 +1575,7 @@ def render_html(report: Report, log_path: str | None = None) -> str:
             f"<p class='aggregate-summary'>Aggregated from {'; '.join(bits)}.</p>"
         )
     if report.total_elapsed is not None:
-        parts.append(
-            f"<p class='aggregate-summary'>Scan completed in "
-            f"{int(round(report.total_elapsed))}s.</p>"
-        )
+        parts.append(f"<p class='aggregate-summary'>{_esc(_elapsed_line(report))}</p>")
     parts.append("</div></section>")
 
     # Recommendations
@@ -1477,7 +1584,10 @@ def render_html(report: Report, log_path: str | None = None) -> str:
         parts.append("<p class='section-eyebrow'>// recommended actions</p>")
         parts.append("<h2>Top recommendations</h2>")
         parts.append("<ol>")
-        for finding, source in report.recommendations[:10]:
+        # Every one, as the Markdown does: the result page shows three and
+        # promises "+ N more in the downloaded report", and this list stopped
+        # at ten without saying so.
+        for finding, source in report.recommendations:
             parts.append("<li>")
             parts.append(f"<span class='sev sev-{_esc(finding.severity)}'>{_esc(finding.severity)}</span>")
             parts.append(f"<strong>{_linkify_html(finding.title)}</strong>")
@@ -1581,6 +1691,15 @@ def render_html(report: Report, log_path: str | None = None) -> str:
     )
     parts.append("</footer>")
 
+    # Opens every <details> for printing in browsers without
+    # ::details-content support, and closes them again afterwards.
+    parts.append(
+        "<script>(function(){var opened=[];"
+        "addEventListener('beforeprint',function(){document.querySelectorAll('details:not([open])')"
+        ".forEach(function(d){d.open=true;opened.push(d);});});"
+        "addEventListener('afterprint',function(){opened.forEach(function(d){d.open=false;});opened=[];});"
+        "})();</script>"
+    )
     parts.append("</main></body></html>")
     return "".join(parts)
 
@@ -1606,22 +1725,22 @@ def _render_scanner_section(r: ScanResult, log_path: str | None = None) -> list[
     if r.link:
         lines.append(f"- Link: {r.link}")
     if r.summary:
-        lines.append(f"- Summary: {r.summary}")
+        lines.append(f"- Summary: {_md_text(r.summary)}")
     if not r.ok and r.error:
-        lines.append(f"- Error: `{r.error}`")
+        lines.append(f"- Error: {_md_code(r.error)}")
         explanation = explain_error(r, log_path=log_path)
         if explanation:
             lines.append("")
-            lines.append(f"  > **What does this mean?** {explanation['title']}")
+            lines.append(f"  > **What does this mean?** {_md_text(explanation['title'])}")
             lines.append(f"  >")
-            lines.append(f"  > {explanation['body']}")
+            lines.append(f"  > {_md_text(explanation['body'])}")
     if r.findings:
         lines.append("- Findings:")
         for f in r.findings:
-            entry = f"  - **[{f.severity}]** {f.title}"
+            entry = f"  - **[{f.severity}]** {_md_text(f.title)}"
             lines.append(entry)
             if f.detail:
-                lines.append(f"    - {f.detail}")
+                lines.append(f"    - {_md_text(f.detail)}")
             if f.recommendation:
-                lines.append(f"    - _Recommendation:_ {f.recommendation}")
+                lines.append(f"    - _Recommendation:_ {_md_text(f.recommendation)}")
     return lines
