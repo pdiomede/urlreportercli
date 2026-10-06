@@ -5,6 +5,61 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-10-06
+
+The CLI shares its version number with the web app, which released 1.0.14
+without a CLI release; this entry covers everything since 1.0.12. A minor
+release because scores change: a new graded scanner joins the average, and
+letter grades now count for slightly less.
+
+### Added
+
+- **A 13th scanner: RPKI route origin (`rpki`).** Resolves the site's IPv4
+  and IPv6 addresses, asks RIPEstat which prefix and network announce each one
+  in BGP, then whether a signed ROA authorises that pair. All routes valid is
+  an A+. No ROA is a B: a hijacked announcement would not be rejected, but most
+  address space has none and it is usually the hosting provider's to fix. A
+  route that contradicts its ROA is a critical finding and an F. Every finding
+  names the announcing network. Weighted 1.0. Runs on IP targets too. Needs no
+  API key; skip it with `--only` or `SCANNER_RPKI=false`.
+
+### Fixed
+
+- **The overall grade was a step more generous than the grades it was made
+  from.** Letters became numbers through one table (A = 95, B = 80) and the
+  average became a letter through another (90 or more is A+). An SSL Labs A on
+  its own produced an overall A+, and B from every scanner gave an overall A-.
+  A letter now counts as the top of its own band (A = 89, B = 74), so it reads
+  back as itself; `urlreporter explain-score` prints the new table. Scanners
+  that set a letter and score by hand (HSTS Preload, HTTP redirect, CAA,
+  crt.sh, security.txt) were moved into agreement, DoS posture, email auth and
+  security.txt now pick their letter from the same ladder, and Mozilla
+  Observatory's number is held inside the band of Mozilla's letter.
+- **The DoS posture check ignored the current rate-limit headers.** It now
+  credits the IETF draft's `RateLimit` and `RateLimit-Policy` fields as well as
+  `X-RateLimit-*` and the older `RateLimit-Limit` / `-Remaining` / `-Reset`.
+- **A domain that sends no mail was graded B for having no DKIM key.** No MX
+  (or a null MX), `v=spf1 -all` and DMARC `p=reject` together mean there is no
+  mail to sign. That setup now grades A+ with "Domain sends no mail; DKIM not
+  applicable". For a subdomain, the parent's `sp=` is the policy that counts.
+- **A revoked DKIM key earned full DKIM credit.** An empty `p=` is a revoked
+  key (RFC 6376), and a `*._domainkey` wildcard returns one for every selector
+  probed. Only a non-empty key counts now.
+
+- **Mozilla Observatory's reason for refusing a site was thrown away.**
+  Observatory answers a site it can't grade with HTTP 422 and a reason such as
+  `site-down` or `unexpected-status-code`, and the scanner reported only
+  "returned HTTP 422". The error now carries Mozilla's reason, and the
+  explanation under it is specific to that reason.
+- **A one-off `HTTP 4xx` was called "not an HTTP error".** Errors worded
+  "<service> returned HTTP NNN" fell through to a catch-all claiming the
+  scanner "raised an exception that wasn't an HTTP or network error". A 4xx
+  is now explained as the service refusing to scan the site, or, for the DNS
+  scanners, as Cloudflare's DoH endpoint rejecting the lookup.
+- **A SERVFAIL on an email-auth lookup was blamed on Url Reporter.** The
+  explanation now says SERVFAIL usually means the domain's own DNS is broken,
+  and points at the DNSSEC result.
+
 ## [1.0.12] - 2026-10-05
 
 The CLI shares its version number with the web app, which released 1.0.6

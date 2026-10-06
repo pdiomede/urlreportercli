@@ -210,7 +210,7 @@ class CAAScanner:
                 f"{len(issuers)} CA(s)."
             )
         elif has_iodef:
-            grade, score = "C", 65
+            grade, score = "C", 59
             summary = f"{len(records)} CAA record(s) on {matched_at} (iodef only, no issue restriction)."
             findings.append(Finding(
                 severity="medium",
@@ -219,7 +219,7 @@ class CAAScanner:
                 recommendation="Add an 'issue' directive to lock down which CAs may issue.",
             ))
         else:
-            grade, score = "C", 65
+            grade, score = "C", 59
             summary = f"{len(records)} CAA record(s) on {matched_at} (no recognized directives)."
 
         apex = publicsuffix.registrable_domain(host)

@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 import httpx
 
 from .. import publicsuffix
+from ..grading import score_to_letter
 from ._retry import RetryExhausted, describe_exc, retry_request
 from .base import Finding, ScanResult
 
@@ -100,9 +101,40 @@ async def _doh_txt(client: httpx.AsyncClient, name: str, *, label: str) -> list[
 async def _doh_has_mx(client: httpx.AsyncClient, name: str, *, label: str) -> bool:
     """True if `name` has any MX records. Used to decide whether a host (or its
     apex) is set up to receive mail at all - non-mail-sending subdomains
-    legitimately don't need their own SPF/DMARC."""
+    legitimately don't need their own SPF/DMARC.
+
+    A null MX (`0 .`, RFC 7505) does not count: it is the domain saying in so
+    many words that it accepts no mail, the opposite of what an MX means."""
     answers = await _doh_answers(client, name, "MX", label=label)
-    return any(a.get("type") == 15 for a in answers)
+    return any(
+        a.get("type") == 15 and not _is_null_mx(str(a.get("data", "")))
+        for a in answers
+    )
+
+
+def _is_null_mx(data: str) -> bool:
+    parts = data.split()
+    return len(parts) == 2 and parts[0] == "0" and parts[1] == "."
+
+
+def _spf_authorises_no_sender(record: str) -> bool:
+    """True for `v=spf1 -all` with nothing else: the owner stating that no
+    server may send mail as this domain."""
+    return record.lower().split() == ["v=spf1", "-all"]
+
+
+def _dkim_public_key(record: str) -> str | None:
+    """The `p=` value of a DKIM key record, quoting and whitespace removed.
+
+    '' is a revoked key (RFC 6376 §3.6.1), and None means the record has no
+    `p=` at all, which is not a usable key either. Long keys arrive from DoH
+    split into several quoted strings, hence stripping `"` inside the value.
+    """
+    for tag in record.split(";"):
+        name, sep, value = tag.partition("=")
+        if sep and re.sub(r'[\s"]', "", name).lower() == "p":
+            return re.sub(r'[\s"]', "", value)
+    return None
 
 
 _SPF_ALL_RE = re.compile(r"(?:^|\s)([-~?+])all(?:\s|;|$)")
@@ -281,21 +313,31 @@ class EmailAuthScanner:
         # MX presence anywhere in the chain.
         has_mx = any(mx_per_parent)
 
-        # DKIM: try host first, then apex.
+        # DKIM: try host first, then apex. Only a record with a non-empty `p=`
+        # is a key. An empty one is revoked — and a wildcard
+        # `*._domainkey  "v=DKIM1; p="` answers every selector probed — so
+        # counting any record that mentions `p=` handed full DKIM credit to a
+        # domain whose every key was revoked. Unusable records are remembered
+        # so the finding can say what was actually there.
         dkim_records: list[str] = []
         dkim_selector_hit: str | None = None
         dkim_at: str | None = None
+        unusable_selector: str | None = None
+        unusable_at: str | None = None
         n_sel = len(DKIM_SELECTORS)
         for i, target in enumerate(dkim_targets):
             slot_start = i * n_sel
             slot = dkim_per_target[slot_start:slot_start + n_sel]
             for sel, got in zip(DKIM_SELECTORS, slot):
                 filtered = [r for r in got if "v=DKIM1" in r or "k=" in r or "p=" in r]
-                if filtered:
-                    dkim_records = filtered
+                keys = [r for r in filtered if _dkim_public_key(r)]
+                if keys:
+                    dkim_records = keys
                     dkim_selector_hit = sel
                     dkim_at = target
                     break
+                if filtered and unusable_selector is None:
+                    unusable_selector, unusable_at = sel, target
             if dkim_records:
                 break
 
@@ -348,22 +390,32 @@ class EmailAuthScanner:
             score += 32
         elif dmarc_p == "none":
             score += 14
-        # DKIM: 20 pts if at least one common selector publishes a key.
-        if dkim_records:
+        # A domain that sends no mail and says so everywhere it can: no MX,
+        # an SPF record authorising no sender at all, and DMARC telling
+        # receivers to reject anything claiming to be from it. That is the
+        # complete lockdown for a parked or web-only domain (M3AAWG's parked
+        # domain practice), and DKIM signs outgoing mail, so there is nothing
+        # for it to sign. Docking 20 points graded the best possible
+        # configuration B and told the owner to publish a key they would
+        # never use.
+        #
+        # The DMARC policy that matters is the one receivers apply to *this*
+        # host: a record inherited from a parent governs subdomains through
+        # `sp=` when it is set (RFC 7489 §6.3), so `p=reject; sp=none` leaves
+        # app.example.com wide open even though p says reject.
+        host_dmarc_policy = dmarc_sp if (dmarc_at and dmarc_at != host and dmarc_sp) else dmarc_p
+        sends_no_mail = (
+            not has_mx
+            and len(spf_hits_records) == 1
+            and _spf_authorises_no_sender(spf_hits_records[0])
+            and host_dmarc_policy == "reject"
+        )
+        # DKIM: 20 pts if at least one common selector publishes a key, or
+        # the domain sends no mail to sign.
+        if dkim_records or sends_no_mail:
             score += 20
 
-        if score >= 95:
-            grade = "A+"
-        elif score >= 85:
-            grade = "A"
-        elif score >= 75:
-            grade = "B"
-        elif score >= 60:
-            grade = "C"
-        elif score >= 40:
-            grade = "D"
-        else:
-            grade = "F"
+        grade = score_to_letter(score)
 
         # ---- Findings ----
         findings: list[Finding] = []
@@ -477,7 +529,36 @@ class EmailAuthScanner:
                     recommendation="Drop the `sp=` tag (defaults to `p=`) or set it to match.",
                 ))
 
-        if not dkim_records:
+        if not dkim_records and sends_no_mail:
+            findings.append(Finding(
+                severity="info",
+                title="Domain sends no mail; DKIM not applicable",
+                detail=(
+                    f"No mail server (no MX, or a null MX), SPF `{spf_hits_records[0][:60]}` "
+                    "authorises no sender, and DMARC tells receivers to reject anything "
+                    f"claiming to be from {host}. DKIM signs outgoing mail, so there is "
+                    "nothing to sign."
+                ),
+            ))
+        elif not dkim_records and unusable_selector is not None:
+            unusable_suffix = "" if unusable_at == host else f" on {unusable_at}"
+            findings.append(Finding(
+                severity="low",
+                title=f"DKIM selector `{unusable_selector}`{unusable_suffix} publishes no usable key",
+                detail=(
+                    "Its record has an empty or missing `p=`, which RFC 6376 treats as a "
+                    "revoked key, and no other common selector publishes an active one. "
+                    "A `*._domainkey` wildcard answers for every selector without a record "
+                    "of its own, so a provider-specific selector that isn't probed may "
+                    "still carry a real key - this is not a definitive miss."
+                ),
+                recommendation=(
+                    "If this domain sends mail, publish your provider's current DKIM key. "
+                    "If it doesn't, keep the empty record and finish the lockdown instead: "
+                    "SPF `v=spf1 -all`, DMARC `p=reject`, and no MX."
+                ),
+            ))
+        elif not dkim_records:
             findings.append(Finding(
                 severity="low",
                 title="No DKIM key found at common selectors",
@@ -508,7 +589,12 @@ class EmailAuthScanner:
             bits.append(f"DMARC on {dmarc_at} (p={dmarc_p})")
         else:
             bits.append("DMARC " + (f"p={dmarc_p}" if dmarc_p else "missing"))
-        bits.append("DKIM " + (f"sel={dkim_selector_hit}" if dkim_records else "not found"))
+        if dkim_records:
+            bits.append(f"DKIM sel={dkim_selector_hit}")
+        elif sends_no_mail:
+            bits.append("DKIM n/a (sends no mail)")
+        else:
+            bits.append("DKIM not found")
         summary = "; ".join(bits)
 
         return ScanResult(

@@ -38,6 +38,7 @@ _RECOGNIZED_KEYS: tuple[str, ...] = (
     "SCANNER_DOS_POSTURE",
     "SCANNER_EMAIL_AUTH",
     "SCANNER_SECURITY_TXT",
+    "SCANNER_RPKI",
     "SCAN_TIMEOUT_SECONDS",
     "SSL_LABS_USE_CACHE",
     "HTTP_USER_AGENT",
@@ -93,6 +94,7 @@ def load_config(config_path: Path | None = None) -> Config:
         "dos_posture": _as_bool(merged.get("SCANNER_DOS_POSTURE"), True),
         "email_auth": _as_bool(merged.get("SCANNER_EMAIL_AUTH"), True),
         "security_txt": _as_bool(merged.get("SCANNER_SECURITY_TXT"), True),
+        "rpki": _as_bool(merged.get("SCANNER_RPKI"), True),
     }
 
     try:

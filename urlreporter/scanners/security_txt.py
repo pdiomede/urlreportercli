@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from ..grading import score_to_letter
 from ._retry import RetryExhausted, describe_exc, retry_request
 from .base import Finding, ScanResult
 
@@ -194,7 +195,7 @@ class SecurityTxtScanner:
                 ),
             ))
             return ScanResult(
-                scanner=self.name, ok=True, grade="B-", score=70,
+                scanner=self.name, ok=True, grade="B-", score=69,
                 summary="No security.txt published.",
                 findings=findings, link=link,
             )
@@ -229,18 +230,7 @@ class SecurityTxtScanner:
         if ack: score += 3
         if prefs: score += 3
 
-        if score >= 95:
-            grade = "A+"
-        elif score >= 85:
-            grade = "A"
-        elif score >= 70:
-            grade = "B"
-        elif score >= 55:
-            grade = "C"
-        elif score >= 35:
-            grade = "D"
-        else:
-            grade = "F"
+        grade = score_to_letter(score)
 
         # Findings
         if served_at != f"https://{authority}{WELLKNOWN_PATH}":

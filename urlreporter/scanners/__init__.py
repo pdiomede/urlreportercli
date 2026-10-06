@@ -10,6 +10,7 @@ from .hsts_preload import HSTSPreloadScanner
 from .https_redirect import HTTPSRedirectScanner
 from .internetnl import InternetNLScanner
 from .mozilla_observatory import MozillaObservatoryScanner
+from .rpki import RPKIScanner
 from .security_headers import SecurityHeadersScanner
 from .security_txt import SecurityTxtScanner
 from .ssllabs import SSLLabsScanner
@@ -27,6 +28,7 @@ REGISTRY: dict[str, type] = {
     "dos_posture": DoSPostureScanner,
     "email_auth": EmailAuthScanner,
     "security_txt": SecurityTxtScanner,
+    "rpki": RPKIScanner,
 }
 
 __all__ = [
@@ -47,4 +49,5 @@ __all__ = [
     "DoSPostureScanner",
     "EmailAuthScanner",
     "SecurityTxtScanner",
+    "RPKIScanner",
 ]

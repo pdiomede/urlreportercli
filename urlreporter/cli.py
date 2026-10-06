@@ -36,11 +36,12 @@ return one, and takes a weighted average of the rest.
 How letter grades become numbers
 --------------------------------
 Some scanners return a number directly. Others return a letter. The
-letter ones convert via this fixed table:
+letter ones convert via this fixed table, where each letter counts as
+the top of its own band on the ladder below:
 
-    A+ = 100   B+ = 85    C+ = 70    D+ = 55    E       = 40
-    A  =  95   B  = 80    C  = 65    D  = 50    F/T/M   =  0
-    A- =  90   B- = 75    C- = 60    D- = 45
+    A+ = 100   B+ = 79    C+ = 64    D+ = 49    E       = 34
+    A  =  89   B  = 74    C  = 59    D  = 44    F/T/M   =  0
+    A- =  84   B- = 69    C- = 54    D- = 39
 
 How scanners are combined
 -------------------------
@@ -52,7 +53,7 @@ than optional hygiene markers:
                  Email auth (SPF/DMARC/DKIM)
     Weight 1.5   HTTP→HTTPS redirect, securityheaders.com
     Weight 1.0   CAA, DoS posture, HSTS Preload, security.txt,
-                 crt.sh, internet.nl
+                 crt.sh, internet.nl, RPKI
 
 Two kinds are skipped:
   * Link-out scanners (no public API; e.g. internet.nl when no token).

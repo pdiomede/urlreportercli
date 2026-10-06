@@ -196,10 +196,13 @@ class SSLLabsScanner:
             ip = ep.get("ipAddress", "?")
             grade = ep.get("grade")
             details = ep.get("details") or {}
-            if grade and letter_to_score(grade) is not None and letter_to_score(grade) < 80:
+            # Below B is worth a finding; below C- is high. Compared through
+            # letter_to_score so the cut-offs follow the table, not a number.
+            endpoint_score = letter_to_score(grade) if grade else None
+            if endpoint_score is not None and endpoint_score < letter_to_score("B"):
                 findings.append(
                     Finding(
-                        severity="high" if letter_to_score(grade) < 60 else "medium",
+                        severity="high" if endpoint_score < letter_to_score("C-") else "medium",
                         title=f"TLS endpoint graded {grade} ({ip})",
                         detail=ep.get("statusMessage", ""),
                         recommendation="Review TLS protocol versions, cipher suites, and certificate chain on this endpoint.",

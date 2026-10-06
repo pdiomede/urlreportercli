@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import logging
+import re
 from urllib.parse import urlparse
 
 import httpx
 
-from ..grading import letter_to_score
+from ..grading import fit_score_to_letter, letter_to_score
 from ._retry import RetryExhausted, describe_exc, retry_request
 from .base import Finding, ScanResult
 
@@ -37,7 +38,7 @@ class MozillaObservatoryScanner:
             )
             if resp.status_code >= 400:
                 return ScanResult(scanner=self.name, ok=False,
-                                  error=f"Observatory returned HTTP {resp.status_code}.", link=link)
+                                  error=_describe_refusal(resp), link=link)
             scan = resp.json()
         except RetryExhausted as e:
             log.error("%s: %s", self.name, e)
@@ -87,6 +88,11 @@ class MozillaObservatoryScanner:
             normalized_score = letter_to_score(grade)
         if isinstance(normalized_score, (int, float)):
             normalized_score = max(0, min(100, int(normalized_score)))
+            if grade:
+                # Mozilla's letter is what the reader sees on Mozilla's site,
+                # but its number runs on Mozilla's scale: their 95 beside an
+                # "A" would read back as our A+.
+                normalized_score = fit_score_to_letter(normalized_score, grade)
 
         summary = (
             f"HTTP best-practice grade {grade} ({score}/100)"
@@ -103,6 +109,40 @@ class MozillaObservatoryScanner:
             findings=findings,
             link=link,
         )
+
+
+# Upstream text lands verbatim in the report, so cap it.
+_MAX_MESSAGE_LEN = 200
+_CODE_RE = re.compile(r"[a-z0-9-]{1,40}")
+
+
+def _describe_refusal(resp: httpx.Response) -> str:
+    """Turn an Observatory error response into a ScanResult error string.
+
+    Observatory answers a site it can't scan with `{"error": <code>,
+    "message": <text>}` — `site-down`, `unexpected-status-code`,
+    `invalid-hostname-lookup` and friends. Those almost always describe the
+    target as seen from Mozilla's servers, which is the one thing the reader
+    needs; the bare status code told them nothing. The code goes in a fixed
+    `(code)` slot because `report.explain_error` matches on it.
+    """
+    base = f"Observatory returned HTTP {resp.status_code}"
+    try:
+        body = resp.json()
+    except ValueError:
+        return f"{base}."
+    if not isinstance(body, dict):
+        return f"{base}."
+    code = body.get("error")
+    message = body.get("message")
+    if isinstance(code, str) and _CODE_RE.fullmatch(code):
+        base += f" ({code})"
+    if isinstance(message, str) and message.strip():
+        message = " ".join(message.split())
+        if len(message) > _MAX_MESSAGE_LEN:
+            message = message[:_MAX_MESSAGE_LEN - 1].rstrip() + "…"
+        return f"{base}: {message}"
+    return f"{base}."
 
 
 def _recommendation_for(test_name: str) -> str | None:

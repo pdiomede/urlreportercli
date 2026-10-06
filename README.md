@@ -1,12 +1,12 @@
 # Url Reporter
 
-> Current version: **v1.0.12**. See [CHANGELOG.md](./CHANGELOG.md) for release notes.
+> Current version: **v1.1.0**. See [CHANGELOG.md](./CHANGELOG.md) for release notes.
 
-A command-line tool that aggregates twelve public security scanners into one report for any URL.
+A command-line tool that aggregates thirteen public security scanners into one report for any URL.
 
 ## What it does
 
-Point it at a URL and get one report on how exposed the site is, drawn from twelve public security
+Point it at a URL and get one report on how exposed the site is, drawn from thirteen public security
 scanners run in parallel. You get:
 
 - a one-screen **summary** printed to your terminal (a big letter at the top, top recommendations,
@@ -44,6 +44,7 @@ By default `urlreporter` queries:
 | 10 | DoS posture (passive) | Detects CDN/WAF in front, edge-cacheable responses, and rate-limit headers. **Generates no load**; active load testing is out of scope. |
 | 11 | Email auth (SPF / DMARC / DKIM) | TXT lookups via Cloudflare DoH for SPF on the apex, DMARC on `_dmarc.<host>`, and DKIM probed across 10 common selectors. Scores by policy strictness (`-all` > `~all` > `+all`; `p=reject` > `p=quarantine` > `p=none`). |
 | 12 | security.txt (RFC 9116) | Fetches `/.well-known/security.txt` (then `/security.txt` as legacy fallback), parses it, and grades on canonical-location compliance, `Contact:` presence, and a parseable, future-dated `Expires:` field. |
+| 13 | RPKI route origin (via [RIPEstat](https://stat.ripe.net/)) | Resolves the site's IPv4 and IPv6 addresses through Cloudflare DoH, looks up which prefix and network announce each in BGP, and checks whether a signed ROA authorises that pair. `valid` is A+, no ROA is a B (most address space has none, and it is usually the host's to fix), `invalid` is a critical F. Applies to IP-literal targets too. Every finding names the announcing network. |
 
 Failed scanners are isolated: one timing out, erroring, or returning garbage does not stop the
 others. Every outbound HTTP call retries on transient errors (5xx, 429, network timeouts) before
@@ -177,7 +178,7 @@ scanner that returned one. Three weight tiers:
 
 - **Weight 2.0** - real cryptographic / authentication posture: SSL Labs, Mozilla Observatory, DNSSEC, Email auth (SPF/DMARC/DKIM).
 - **Weight 1.5** - meaningful but narrower: HTTP→HTTPS redirect, securityheaders.com.
-- **Weight 1.0** - hardening extras and hygiene markers: CAA, DoS posture, HSTS Preload, security.txt, crt.sh, internet.nl.
+- **Weight 1.0** - hardening extras and hygiene markers: CAA, DoS posture, HSTS Preload, security.txt, crt.sh, internet.nl, RPKI.
 
 Link-out scanners (no public API) and scanners that errored are skipped, and listed separately in
 the report. The weighted average is rounded to a whole number and mapped to a letter (90 or more is
@@ -203,7 +204,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/). All changes a
 
 ## Credits
 
-Url Reporter v1.0.12, made by [Paolo Diomede](https://pdiomede.com).
+Url Reporter v1.1.0, made by [Paolo Diomede](https://pdiomede.com).
 
 ## License
 

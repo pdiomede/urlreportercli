@@ -10,6 +10,12 @@ from .scanners.base import ScanResult
 _URL_RE = re.compile(r"https?://[^\s<>\"')]+[^\s<>\"'),.;:!?]")
 
 _HTTP_STATUS_RE = re.compile(r"last HTTP (\d{3})")
+# A scanner that got a non-retryable status back says so once, as
+# "<service> returned HTTP NNN" — there was no retry loop to exhaust.
+_RETURNED_STATUS_RE = re.compile(r"returned HTTP (\d{3})")
+_OBSERVATORY_CODE_RE = re.compile(r"returned HTTP \d{3} \(([a-z0-9-]+)\)")
+# email_auth's wording when a resolver answers but with an error RCODE.
+_DOH_RCODE_RE = re.compile(r"DoH returned RCODE (\d+)")
 
 # Scanners that fetch the user's own origin directly (rather than going to a
 # third-party API). When these get throttled, the user's site / CDN is the
@@ -38,9 +44,16 @@ _UNREACHABLE_MARKERS = (
 )
 
 
-def _logs_pointer(log_path: str | None) -> str:
-    """Render a user-facing pointer to the per-run log file."""
-    return log_path if log_path else "./logs/error_<timestamp>.log"
+def _logs_pointer(log_path: str | None, fallback: str) -> str:
+    """Point the reader at the per-run log, if they can open one.
+
+    `log_path` is only passed when the reader of this output can read the
+    file — the CLI, whose log sits in the user's own ./logs/. The web surface
+    passes nothing: its readers can't see the server's disk, and the absolute
+    path used to leak into every downloaded report. They get `fallback`, a
+    next step they can actually take.
+    """
+    return f" See {log_path} for details." if log_path else f" {fallback}"
 
 
 def _hits_target_directly(result: ScanResult) -> bool:
@@ -109,13 +122,96 @@ def _explain_http_status(result: ScanResult, status: int, log_path: str | None =
                 "their cache warms; other times this is a real miss."
             ),
         }
+    if 400 <= status <= 499 and result.scanner in _DOH_SCANNERS:
+        return {
+            "title": f"Cloudflare's DNS service rejected the lookup (HTTP {status})",
+            "body": (
+                "This scanner reads DNS records through Cloudflare's public DoH "
+                "endpoint (https://cloudflare-dns.com/dns-query), which refused the "
+                "query. That is not a verdict on your DNS records, and the scanner "
+                "is left out of the overall score. Re-run the scan."
+            ),
+        }
+    if 400 <= status <= 499:
+        return {
+            "title": f"The scanner service refused this request (HTTP {status})",
+            "body": (
+                "The third-party service would not scan this particular site. That "
+                "usually comes down to how the site answers automated requests, not "
+                "a flaw in its security. This scanner is left out of the overall "
+                "score. Open its link to try the check on the service's own site."
+            ),
+        }
     return {
         "title": f"HTTP {status} error",
         "body": (
-            f"Every retry returned HTTP {status}. See {_logs_pointer(log_path)} "
-            f"for the full request/response trace."
+            f"The scanner endpoint answered HTTP {status}."
+            + _logs_pointer(log_path, "Re-run the scan; if it keeps failing, the "
+                            "service may not support this site.")
         ),
     }
+
+
+# Observatory scans from Mozilla's servers and answers a site it can't grade
+# with HTTP 422 and one of these codes (mdn-http-observatory, src/api/errors.js).
+# The scanner puts the code in a "(code)" slot after the status.
+_OBSERVATORY_VANTAGE = (
+    "Mozilla Observatory connects to your site from Mozilla's own servers, "
+    "not from your browser or ours. "
+)
+_OBSERVATORY_RETRY = (
+    " Observatory is left out of the overall score; open its link to retry "
+    "the scan on developer.mozilla.org."
+)
+_OBSERVATORY_EXPLANATIONS: dict[str, dict[str, str]] = {
+    "site-down": {
+        "title": "Mozilla's scanner couldn't reach your site",
+        "body": (
+            _OBSERVATORY_VANTAGE
+            + "It could not get a response. Common causes: the site is only "
+            "reachable from a private network or VPN, a firewall, geo-block or "
+            "WAF drops traffic from cloud providers, or the site was briefly down."
+            + _OBSERVATORY_RETRY
+        ),
+    },
+    "unexpected-status-code": {
+        "title": "Your site answered Mozilla's scanner with an error status",
+        "body": (
+            _OBSERVATORY_VANTAGE
+            + "Observatory only grades a normal page, and your site returned the "
+            "status quoted above instead. The usual cause is a bot challenge or "
+            "WAF (403 or 503), or a homepage that errors for clients without "
+            "cookies or JavaScript."
+            + _OBSERVATORY_RETRY
+        ),
+    },
+    "invalid-hostname-lookup": {
+        "title": "Mozilla couldn't resolve this hostname",
+        "body": (
+            _OBSERVATORY_VANTAGE
+            + "Its DNS lookup for the hostname failed. That happens with names "
+            "that only exist on an internal network, and with domains whose DNS "
+            "has not propagated yet."
+            + _OBSERVATORY_RETRY
+        ),
+    },
+    "invalid-hostname-ip": {
+        "title": "Mozilla Observatory doesn't scan IP addresses",
+        "body": (
+            "Observatory only accepts hostnames. Scan the site by its domain "
+            "name to get an Observatory grade."
+        ),
+    },
+    "invalid-hostname": {
+        "title": "Mozilla Observatory rejected this hostname",
+        "body": (
+            "Observatory considered the hostname invalid and did not scan it. "
+            "It only accepts public, fully qualified domain names."
+            + _OBSERVATORY_RETRY
+        ),
+    },
+}
+_OBSERVATORY_EXPLANATIONS["invalid-site"] = _OBSERVATORY_EXPLANATIONS["invalid-hostname"]
 
 
 def explain_error(result: ScanResult, log_path: str | None = None) -> dict[str, str] | None:
@@ -124,6 +220,9 @@ def explain_error(result: ScanResult, log_path: str | None = None) -> dict[str, 
     Output shape: ``{"title": str, "body": str}``. Designed to back a "What does
     this mean?" expandable section on the report. Returns None for non-errored
     results or when we have no canned guidance for the error string.
+
+    Pass `log_path` only when the reader can open that file (the CLI). Without
+    it the explanation never mentions logs — web readers can't see the server.
     """
     if result.ok or not result.error:
         return None
@@ -157,7 +256,36 @@ def explain_error(result: ScanResult, log_path: str | None = None) -> dict[str, 
             ),
         }
 
-    status_match = _HTTP_STATUS_RE.search(err)
+    rcode_match = _DOH_RCODE_RE.search(err)
+    if result.scanner in _DOH_SCANNERS and rcode_match:
+        rcode = int(rcode_match.group(1))
+        if rcode == 2:
+            return {
+                "title": "DNS lookups for this domain fail (SERVFAIL)",
+                "body": (
+                    "Cloudflare's resolver answered SERVFAIL: it could not get a "
+                    "trustworthy answer for this domain. That usually points at the "
+                    "domain's own DNS, such as DNSSEC signatures that don't validate "
+                    "or nameservers that don't respond. Check the DNSSEC row of this "
+                    "report, then re-run the scan once the DNS is fixed."
+                ),
+            }
+        return {
+            "title": f"Cloudflare's resolver refused the lookup (DNS RCODE {rcode})",
+            "body": (
+                "This scanner reads DNS records through Cloudflare's public DoH "
+                "endpoint, which answered with an error code instead of records. "
+                "That is not a verdict on your DNS records, and the scanner is "
+                "left out of the overall score. Re-run the scan."
+            ),
+        }
+
+    if result.scanner == "Mozilla Observatory":
+        code_match = _OBSERVATORY_CODE_RE.search(err)
+        if code_match and code_match.group(1) in _OBSERVATORY_EXPLANATIONS:
+            return _OBSERVATORY_EXPLANATIONS[code_match.group(1)]
+
+    status_match = _HTTP_STATUS_RE.search(err) or _RETURNED_STATUS_RE.search(err)
     if status_match:
         return _explain_http_status(result, int(status_match.group(1)), log_path=log_path)
 
@@ -177,8 +305,13 @@ def explain_error(result: ScanResult, log_path: str | None = None) -> dict[str, 
             "body": (
                 "Repeated network-level failures while contacting the scanner endpoint "
                 "(connection refused, DNS failure, or socket timeout). Every retry hit "
-                "the same problem. Re-run the scan; if it persists, check your network "
-                f"and the per-run log at {_logs_pointer(log_path)}."
+                "the same problem."
+                + (
+                    " Re-run the scan; if it persists, check your network."
+                    + _logs_pointer(log_path, "")
+                    if log_path else
+                    " This is usually temporary: re-run the scan in a few minutes."
+                )
             ),
         }
 
@@ -198,8 +331,13 @@ def explain_error(result: ScanResult, log_path: str | None = None) -> dict[str, 
     return {
         "title": "Unexpected scanner failure",
         "body": (
-            "The scanner raised an exception that wasn't an HTTP or network error. "
-            f"Look in {_logs_pointer(log_path)} for the full traceback."
+            "The scanner stopped on an error we have no specific explanation for, "
+            "most likely a fault in Url Reporter or in the scanner service rather "
+            "than in your site's security. The scanner is left out of the overall "
+            "score."
+            + _logs_pointer(log_path, "Re-run the scan; if it keeps failing for "
+                            "this URL, please report it using the bug-report "
+                            "address on the Contact page.")
         ),
     }
 

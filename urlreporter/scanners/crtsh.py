@@ -235,16 +235,16 @@ def _grade(
         )
 
     if n_recent == 0:
-        grade, score = "C", 65
+        grade, score = "C", 59
         summary = f"{n_total} historical cert(s) but none in the last {LOOKBACK_DAYS} days."
     elif n_issuers <= 2:
         grade, score = "A+", 100
         summary = f"{n_recent} cert(s) in last {LOOKBACK_DAYS}d from {n_issuers} CA(s)."
     elif n_issuers <= 4:
-        grade, score = "A", 90
+        grade, score = "A", 89
         summary = f"{n_recent} cert(s) in last {LOOKBACK_DAYS}d from {n_issuers} CA(s)."
     elif n_issuers <= 7:
-        grade, score = "B", 75
+        grade, score = "B", 74
         summary = f"{n_recent} cert(s) in last {LOOKBACK_DAYS}d from {n_issuers} different CAs."
         findings.append(Finding(
             severity="low",
@@ -253,7 +253,7 @@ def _grade(
             recommendation="Pin issuance to a small set of CAs via CAA records.",
         ))
     else:
-        grade, score = "C", 60
+        grade, score = "C", 59
         summary = f"{n_recent} cert(s) in last {LOOKBACK_DAYS}d from {n_issuers} different CAs."
         findings.append(Finding(
             severity="medium",

@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from ..grading import score_to_letter
 from ._retry import RetryExhausted, describe_exc, retry_request
 from .base import Finding, ScanResult
 
@@ -36,9 +37,14 @@ CDN_FINGERPRINTS: list[tuple[str, list[tuple[str, str | None]]]] = [
     # produced false positives (corporate proxies counting as CDN, +60 score).
 ]
 
+# `ratelimit` and `ratelimit-policy` are the IETF httpapi draft's current
+# fields, which folded the earlier draft's separate -limit/-remaining/-reset
+# headers into two structured ones. Matching only the older names gave a site
+# that follows the current draft no credit at all.
 RATE_LIMIT_HEADERS = (
     "x-ratelimit-limit", "x-ratelimit-remaining", "x-ratelimit-reset",
     "ratelimit-limit", "ratelimit-remaining", "ratelimit-reset",
+    "ratelimit", "ratelimit-policy",
     "retry-after",
 )
 
@@ -136,18 +142,7 @@ class DoSPostureScanner:
         if rate_hits:
             score += 15
 
-        if score >= 95:
-            grade = "A+"
-        elif score >= 85:
-            grade = "A"
-        elif score >= 70:
-            grade = "B"
-        elif score >= 55:
-            grade = "C"
-        elif score >= 35:
-            grade = "D"
-        else:
-            grade = "F"
+        grade = score_to_letter(score)
 
         findings: list[Finding] = []
 
@@ -192,7 +187,7 @@ class DoSPostureScanner:
             findings.append(Finding(
                 severity="low",
                 title="No rate-limit headers observed on this response",
-                detail="No x-ratelimit-* / ratelimit-* / retry-after seen.",
+                detail="No RateLimit / RateLimit-Policy / x-ratelimit-* / ratelimit-* / retry-after seen.",
                 recommendation="Advertise per-IP / per-API-key rate limits via response headers; helps clients self-throttle.",
             ))
 

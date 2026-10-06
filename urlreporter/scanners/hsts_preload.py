@@ -86,7 +86,7 @@ class HSTSPreloadScanner:
                 scanner=self.name,
                 ok=True,
                 grade="A",
-                score=90,
+                score=89,
                 summary="Domain is pending inclusion on the HSTS preload list.",
                 findings=[
                     Finding(
@@ -106,7 +106,7 @@ class HSTSPreloadScanner:
             scanner=self.name,
             ok=True,
             grade="B+",
-            score=80,
+            score=79,
             summary="Domain is NOT on the HSTS preload list.",
             findings=[
                 Finding(

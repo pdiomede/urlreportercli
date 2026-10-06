@@ -5,20 +5,29 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .scanners.base import ScanResult
 
+# The one grading scale. Every letter shown anywhere, per scanner or overall,
+# must read back to itself through this ladder; /score publishes it.
+_LADDER: tuple[tuple[int, str], ...] = (
+    (90, "A+"), (85, "A"), (80, "A-"),
+    (75, "B+"), (70, "B"), (65, "B-"),
+    (60, "C+"), (55, "C"), (50, "C-"),
+    (45, "D+"), (40, "D"), (35, "D-"),
+)
+
+
+def _band_top(letter: str) -> int:
+    i = next(i for i, (_, lt) in enumerate(_LADDER) if lt == letter)
+    return 100 if i == 0 else _LADDER[i - 1][0] - 1
+
+
+# A letter counts as the top of its own band. This table used to sit a step
+# above the ladder (A = 95, B = 80), so a letter fed into the average read
+# back as a better one: an SSL Labs A alone made an overall A+, and a site
+# graded B by every scanner was reported A-.
 LETTER_TO_SCORE: dict[str, int] = {
-    "A+": 100,
-    "A": 95,
-    "A-": 90,
-    "B+": 85,
-    "B": 80,
-    "B-": 75,
-    "C+": 70,
-    "C": 65,
-    "C-": 60,
-    "D+": 55,
-    "D": 50,
-    "D-": 45,
-    "E": 40,
+    **{letter: _band_top(letter) for _, letter in _LADDER},
+    # SSL Labs' E sits below D-, where the ladder only has F.
+    "E": _LADDER[-1][0] - 1,
     "F": 0,
     "T": 0,
     "M": 0,
@@ -36,31 +45,28 @@ def score_to_letter(score: float | int | None) -> str:
     if score is None:
         return "?"
     s = float(score)
-    if s >= 90:
-        return "A+"
-    if s >= 85:
-        return "A"
-    if s >= 80:
-        return "A-"
-    if s >= 75:
-        return "B+"
-    if s >= 70:
-        return "B"
-    if s >= 65:
-        return "B-"
-    if s >= 60:
-        return "C+"
-    if s >= 55:
-        return "C"
-    if s >= 50:
-        return "C-"
-    if s >= 45:
-        return "D+"
-    if s >= 40:
-        return "D"
-    if s >= 35:
-        return "D-"
+    for threshold, letter in _LADDER:
+        if s >= threshold:
+            return letter
     return "F"
+
+
+def fit_score_to_letter(score: int, letter: str) -> int:
+    """Clamp an upstream score into the ladder band of the upstream letter.
+
+    For services that send both (Mozilla Observatory): their letter is what
+    the reader sees on the service's own site, but their numeric scale is not
+    ours, so their 95 beside their "A" would read back as our A+.
+    """
+    key = letter.strip().upper()
+    floors = {lt: t for t, lt in _LADDER}
+    if key in floors:
+        low, high = floors[key], LETTER_TO_SCORE[key]
+    elif key in LETTER_TO_SCORE:  # E, F, T, M: everything under the ladder
+        low, high = 0, _LADDER[-1][0] - 1
+    else:
+        return score
+    return max(low, min(score, high))
 
 
 # Weights reflect security impact, not just presence of a check. Keyed by
@@ -82,6 +88,8 @@ SCANNER_WEIGHTS: dict[str, float] = {
     "security.txt (RFC 9116)": 1.0,
     "crt.sh (Certificate Transparency)": 1.0,
     "internet.nl": 1.0,
+    # Usually the hosting provider's routing, not the site owner's doing.
+    "RPKI route origin": 1.0,
 }
 DEFAULT_WEIGHT = 1.0
 

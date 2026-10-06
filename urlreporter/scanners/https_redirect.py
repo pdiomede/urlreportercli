@@ -66,7 +66,7 @@ class HTTPSRedirectScanner:
                     is_refused = True
             if is_refused:
                 return ScanResult(
-                    scanner=self.name, ok=True, grade="A", score=90,
+                    scanner=self.name, ok=True, grade="A", score=89,
                     summary="Plain http:// is not served at all (HTTPS-only host).",
                     findings=[Finding(
                         severity="info",
@@ -103,7 +103,7 @@ class HTTPSRedirectScanner:
                 recommendation="Configure a 301/308 redirect from http://<host>/ to https://<host>/.",
             ))
         elif not same_host:
-            grade, score = "C", 65
+            grade, score = "C", 59
             summary = f"http:// redirects to HTTPS but on a different host ({final.hostname})."
             findings.append(Finding(
                 severity="medium",
@@ -112,7 +112,7 @@ class HTTPSRedirectScanner:
                 recommendation="Redirect to HTTPS on the same host first, then to wherever else.",
             ))
         elif intermediate_http:
-            grade, score = "B", 80
+            grade, score = "B", 74
             summary = "Redirect chain visits HTTP before reaching HTTPS."
             findings.append(Finding(
                 severity="low",
@@ -122,7 +122,7 @@ class HTTPSRedirectScanner:
             ))
         elif len(resp.history) == 0:
             # Shouldn't happen if we ended up on https, but defensive.
-            grade, score = "B", 80
+            grade, score = "B", 74
             summary = f"Reached HTTPS without an explicit redirect (final URL: {final.geturl()})."
         else:
             grade, score = "A+", 100
