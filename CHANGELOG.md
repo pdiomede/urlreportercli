@@ -5,7 +5,11 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.1.3] - 2026-10-07
+
+No changes to the CLI. This release keeps its version in step with the web
+app, whose 1.1.3 added a share button to the report page. The User-Agent
+sent to every service and scanned site now reads `urlreporter/1.1.3`.
 
 ## [1.1.2] - 2026-10-06
 
