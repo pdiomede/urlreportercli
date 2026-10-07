@@ -15,6 +15,7 @@ from .registration import RegistrationInfo, fetch_registration
 from .scanners import REGISTRY
 from .scanners._retry import describe_exc
 from .scanners.base import Finding, ScanResult, SEVERITY_ORDER
+from .transport import CappedTransport
 
 ProgressCallback = Callable[[dict], Awaitable[None] | None]
 RequestHook = Callable[[httpx.Request], Awaitable[None]]
@@ -22,6 +23,18 @@ RequestHook = Callable[[httpx.Request], Awaitable[None]]
 # Ceiling on the RDAP lookup, which is awaited after the scanners and before
 # the 'done' event — every second of it is a second the user waits.
 REGISTRATION_TIMEOUT_SECONDS = 5.0
+
+# Every scanner is stopped this long after `cfg.timeout_seconds`. The read
+# timeout on the shared client applies per chunk, so a site that kept sending
+# a byte every few seconds held a scan, and its slot, open for as long as it
+# liked. SSL Labs gives up on its own at exactly `cfg.timeout_seconds` and
+# returns a link-out; the margin lets that result arrive rather than racing
+# it. The matching cap on how much a response may be lives in `transport`.
+SCANNER_DEADLINE_GRACE_SECONDS = 20.0
+
+# The error a scanner that ran out of time reports; `report.explain_error`
+# recognises it.
+SCANNER_TIMEOUT_ERROR = "Stopped after {seconds:.0f}s: the scanner did not finish in time."
 
 
 @dataclass
@@ -55,19 +68,26 @@ def _build_scanners(cfg: Config) -> list:
 
 
 async def _safe_scan(scanner, url: str, client: httpx.AsyncClient,
-                     logger: logging.Logger | None) -> ScanResult:
+                     logger: logging.Logger | None,
+                     deadline: float | None = None) -> ScanResult:
+    name = getattr(scanner, "name", scanner.__class__.__name__)
     try:
-        return await scanner.scan(url, client=client)
+        if deadline is None:
+            return await scanner.scan(url, client=client)
+        return await asyncio.wait_for(scanner.scan(url, client=client), timeout=deadline)
+    except asyncio.TimeoutError:
+        if logger is not None:
+            logger.error("Scanner '%s' stopped after %.0fs without finishing", name, deadline)
+        return ScanResult(
+            scanner=name, ok=False,
+            error=SCANNER_TIMEOUT_ERROR.format(seconds=deadline),
+        )
     except asyncio.CancelledError:
         raise
     except Exception as e:  # noqa: BLE001 - error isolation is the whole point here
         if logger is not None:
             logger.exception("Scanner '%s' raised an unexpected exception", getattr(scanner, "name", "?"))
-        return ScanResult(
-            scanner=getattr(scanner, "name", scanner.__class__.__name__),
-            ok=False,
-            error=describe_exc(e),
-        )
+        return ScanResult(scanner=name, ok=False, error=describe_exc(e))
 
 
 async def _emit(cb: ProgressCallback | None, event: dict, logger: logging.Logger | None = None) -> None:
@@ -133,16 +153,19 @@ async def run_scans(
     # to 169.254.169.254 would silently fetch from internal IPs.
     event_hooks = {"request": [request_hook]} if request_hook is not None else {}
     results: list[ScanResult] = []
+    deadline = float(cfg.timeout_seconds) + SCANNER_DEADLINE_GRACE_SECONDS
 
     registration: RegistrationInfo | None = None
-    async with httpx.AsyncClient(timeout=timeout, headers=headers, event_hooks=event_hooks) as client:
+    # CappedTransport bounds every response body; see `transport`.
+    async with httpx.AsyncClient(timeout=timeout, headers=headers, event_hooks=event_hooks,
+                                 transport=CappedTransport()) as client:
         registration_task = asyncio.create_task(fetch_registration(url, client))
         starts: dict[asyncio.Task, tuple[str, float]] = {}
         pending: set[asyncio.Task] = set()
         try:
             for s in scanners:
                 await _emit(on_event, logger=logger, event={"type": "scanner_start", "scanner": s.name})
-                t = asyncio.create_task(_safe_scan(s, url, client, logger))
+                t = asyncio.create_task(_safe_scan(s, url, client, logger, deadline=deadline))
                 starts[t] = (s.name, time.monotonic())
                 pending.add(t)
 

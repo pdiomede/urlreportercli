@@ -7,8 +7,13 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [1.1.3] - 2026-10-07
 
-No CLI changes; the version tracks the web app's 1.1.3. The User-Agent now reads
-`urlreporter/1.1.3`.
+Security fixes from an audit of the web app, in code the CLI shares. The version
+tracks the web app's 1.1.3, and the User-Agent now reads `urlreporter/1.1.3`.
+
+### Security
+
+- **A scanned site can no longer size a scan's memory or hold it open.** Responses stop at 8 MiB, three scanners read headers only, security.txt reads at most 64 KiB, and every scanner is stopped `SCAN_TIMEOUT_SECONDS` plus 20 s after it started.
+- **Markdown report:** a blank line in an error no longer breaks out of its code span, and the registrar link is http(s)-checked.
 
 ## [1.1.2] - 2026-10-06
 

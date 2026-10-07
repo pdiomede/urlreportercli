@@ -93,6 +93,9 @@ async def retry_request(
             last_exc = None
             if logger is not None:
                 logger.warning("%s: transient HTTP %d", label, resp.status_code)
+            # A response fetched with stream=True (transport.fetch_headers)
+            # still holds its connection; a no-op for one already read.
+            await resp.aclose()
             continue
         return resp
 

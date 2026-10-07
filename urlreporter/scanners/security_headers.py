@@ -8,6 +8,7 @@ from urllib.parse import quote, urlparse
 import httpx
 
 from ..grading import letter_to_score, score_to_letter
+from ..transport import fetch_headers
 from ._retry import RetryExhausted, describe_exc, retry_request
 from .base import Finding, ScanResult
 
@@ -118,9 +119,10 @@ class SecurityHeadersScanner:
             return None, "No X-Grade header in response.", "securityheaders.com returned no grade"
 
         async def _fetch_target() -> httpx.Response | None:
+            # Headers only; the body is the site's to size and never read.
             try:
                 return await retry_request(
-                    lambda: client.get(url, follow_redirects=True),
+                    lambda: fetch_headers(client, url),
                     label=f"{self.name} direct fetch", logger=log,
                 )
             except (RetryExhausted, httpx.HTTPError) as e:

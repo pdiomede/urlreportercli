@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 import httpx
 
 from ..grading import score_to_letter
+from ..transport import read_body
 from ._retry import RetryExhausted, describe_exc, retry_request
 from .base import Finding, ScanResult
 
@@ -51,6 +52,11 @@ def _authority(host: str) -> str:
 # pre-RFC location /security.txt is also recognized as a fallback.
 WELLKNOWN_PATH = "/.well-known/security.txt"
 LEGACY_PATH = "/security.txt"
+
+# The most of a security.txt that is read. Real files are a few hundred
+# bytes; a site that answers the path with something enormous is not
+# publishing one, and reading it whole let the site size the scan's memory.
+MAX_BODY_BYTES = 64 * 1024
 
 # Field names defined by RFC 9116. We're case-insensitive when matching.
 KNOWN_FIELDS = {
@@ -143,8 +149,13 @@ class SecurityTxtScanner:
             or None for the rare case retry_request itself produces no value."""
             candidate = f"https://{authority}{path}"
             try:
+                # Streamed: the body is read below, only when it is the file
+                # we want and only up to MAX_BODY_BYTES.
                 return await retry_request(
-                    lambda: client.get(candidate, follow_redirects=True, timeout=15.0),
+                    lambda: client.send(
+                        client.build_request("GET", candidate, timeout=15.0),
+                        stream=True, follow_redirects=True,
+                    ),
                     label=f"{self.name} GET {path}", logger=log,
                 )
             except RetryExhausted as e:
@@ -156,6 +167,11 @@ class SecurityTxtScanner:
             _try_path(WELLKNOWN_PATH), _try_path(LEGACY_PATH)
         )
         results_by_path = dict(zip((WELLKNOWN_PATH, LEGACY_PATH), results))
+
+        async def _close_all() -> None:
+            for r in results_by_path.values():
+                if isinstance(r, httpx.Response):
+                    await r.aclose()
 
         body: str | None = None
         served_at: str | None = None
@@ -186,7 +202,12 @@ class SecurityTxtScanner:
                 if ctype.startswith(("application/json", "image/", "video/", "application/octet-stream")):
                     last_error = f"Wrong content-type at {candidate}: {ctype}"
                     continue
-                body = r.text
+                try:
+                    raw = await read_body(r, MAX_BODY_BYTES)
+                except httpx.HTTPError as e:
+                    last_error = f"Could not read {candidate}: {describe_exc(e)}"
+                    continue
+                body = raw.decode(r.encoding or "utf-8", errors="replace")
                 served_at = candidate
                 break
             elif r.status_code in (404, 403, 410):
@@ -196,6 +217,8 @@ class SecurityTxtScanner:
             else:
                 last_error = f"{candidate} returned HTTP {r.status_code}"
                 continue
+        # Whatever was not read still holds its connection.
+        await _close_all()
 
         findings: list[Finding] = []
 

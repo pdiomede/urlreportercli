@@ -200,6 +200,11 @@ def _is_disallowed_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool
         or ip.is_multicast
         or ip.is_reserved
         or ip.is_unspecified
+        # Everything else the IANA registries keep off the public internet,
+        # chiefly the shared address space 100.64.0.0/10, which `is_private`
+        # deliberately excludes. Tailscale hands out exactly those addresses,
+        # so on a host running it they are internal peers.
+        or not ip.is_global
     )
 
 

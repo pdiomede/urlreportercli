@@ -262,6 +262,31 @@ def explain_error(result: ScanResult, log_path: str | None = None) -> dict[str, 
         return None
     err = result.error
 
+    if "the scanner did not finish in time" in err:
+        return {
+            "title": "The scanner ran out of time",
+            "body": (
+                "Every scanner is stopped once the scan's time limit is up, and "
+                "this one had not finished. Usually the site, or the service the "
+                "scanner asks, was answering very slowly or kept a connection open "
+                "without completing. The scanner is left out of the overall "
+                "score. Re-run the scan; if it happens every time, check how the "
+                "site responds to automated clients."
+            ),
+        }
+
+    if "exceeded" in err and "MiB; stopped reading" in err:
+        return {
+            "title": "The site sent more data than a scan will read",
+            "body": (
+                "A scan reads a bounded amount from each response, and this one "
+                "went past the limit, so the scanner stopped. A normal page or "
+                "security.txt is nowhere near it; check what the site serves to "
+                "automated clients at that address. The scanner is left out of "
+                "the overall score."
+            ),
+        }
+
     if result.scanner == "SSL Labs" and "Timed out after" in err:
         return {
             "title": "SSL Labs is still assessing your site",
@@ -417,10 +442,7 @@ def _md_code_span(text: str) -> str:
     content, and content that starts or ends with a backtick needs one space of
     padding (which the renderer strips back off).
     """
-    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
-    fence = "`" * (longest + 1)
-    pad = " " if text.startswith("`") or text.endswith("`") else ""
-    return f"{fence}{pad}{text}{pad}{fence}"
+    return _md_code(text)
 
 
 # Characters that break a `<...>` markdown link destination, and the
@@ -510,13 +532,18 @@ def _registration_summary_line(reg) -> str:
         bits.append(f"Registrar: {reg.registrar}")
     if reg.expires is not None:
         days = reg.days_until_expiry
-        if days is not None and days < 0:
-            bits.append(f"EXPIRED {_format_age(days)} ago ({_format_date(reg.expires)})")
+        # Day 0 splits on the timestamp, as the page and Markdown do: it read
+        # "Expires <date> (0 days)" even for a domain that had lapsed hours ago.
+        if days is not None and (days < 0 or (days == 0 and reg.is_expired)):
+            when = "today" if days == 0 else f"{_format_age(days)} ago"
+            bits.append(f"EXPIRED {when} ({_format_date(reg.expires)})")
+        elif days == 0:
+            bits.append(f"Expires today ({_format_date(reg.expires)})")
         elif days is not None:
-            bits.append(f"Expires {_format_date(reg.expires)} ({_format_age(days)})")
+            bits.append(f"Expires {_format_date(reg.expires)} (in {_format_age(days)})")
     if not bits:
         return ""
-    return "Registration\n" + " · ".join(bits)
+    return " · ".join(bits)
 
 
 def _registration_security_line(reg) -> str:
@@ -554,9 +581,13 @@ def _render_registration_html(reg) -> list[str]:
     cells_row1: list[tuple[str, str, str, str | None]] = []  # (label, value_html, urgency, tooltip)
     cells_row2: list[tuple[str, str, str, str | None]] = []
     if reg.registrar:
-        if reg.registrar_url:
+        # Scheme-checked here as well as when the RDAP answer was parsed, like
+        # every other link the report renders: a `RegistrationInfo` built
+        # elsewhere must not be able to put a `javascript:` href in a report.
+        registrar_url = _safe_link(reg.registrar_url)
+        if registrar_url:
             v = (
-                f"<a href='{_esc(reg.registrar_url)}' target='_blank' "
+                f"<a href='{_esc(registrar_url)}' target='_blank' "
                 f"rel='noopener noreferrer'>{_esc(reg.registrar)}</a>"
             )
         else:
@@ -614,7 +645,7 @@ def _render_registration_html(reg) -> list[str]:
             "Transfer, update, and delete are blocked at the registrar (client*Prohibited). "
             "Standard protection against casual transfer or modification. A determined "
             "attacker who compromises the registrar account can disable this. For stronger "
-            "protection, see Registry lock (the cell to the right).",
+            "protection, ask your registrar about Registry lock.",
         ))
     elif reg.locked is False:
         cells_row2.append((
@@ -717,7 +748,21 @@ def _render_registration_html(reg) -> list[str]:
     return parts
 
 
-_MD_CODE_SPAN_RE = re.compile(r"(`+)(.+?)\1", re.DOTALL)
+# A code span as CommonMark sees one: a whole backtick run, closed by the next
+# run of exactly the same length. Without the lookarounds "``<img>```" counted
+# as a span here (two backticks, then the first two of three) while a renderer
+# saw no span at all, so the <img> went out unescaped.
+_MD_CODE_SPAN_RE = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)", re.DOTALL)
+
+
+def _md_escape(text: str) -> str:
+    """Escape the characters that let text outside a code span become markup.
+
+    Backslash first, or "\\<img>" turned the added escape into an escaped
+    backslash and left the tag live. "[" stops "![x](https://…)" in a site's
+    security.txt or SPF record becoming an image that loads when the report
+    is opened."""
+    return text.replace("\\", "\\\\").replace("<", "\\<").replace("[", "\\[")
 
 
 def _md_text(value: object) -> str:
@@ -733,16 +778,23 @@ def _md_text(value: object) -> str:
     out: list[str] = []
     last = 0
     for match in _MD_CODE_SPAN_RE.finditer(text):
-        out.append(text[last:match.start()].replace("<", "\\<"))
+        out.append(_md_escape(text[last:match.start()]))
         out.append(match.group(0))
         last = match.end()
-    out.append(text[last:].replace("<", "\\<"))
+    out.append(_md_escape(text[last:]))
     return "".join(out)
 
 
 def _md_code(value: object) -> str:
-    """`value` as one inline code span, whatever backticks it contains."""
+    """`value` as one inline code span, whatever backticks or line breaks it
+    contains.
+
+    A blank line ends the paragraph, and the code span with it: an error
+    string carrying one put everything after it into the document as
+    Markdown, where a `<img onerror>` is live HTML. Line breaks become single
+    spaces, so the span stays one span."""
     text = "" if value is None else str(value)
+    text = re.sub(r"\s*[\r\n]\s*", " ", text)
     longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
     fence = "`" * (longest + 1)
     pad = " " if text.startswith("`") or text.endswith("`") else ""
@@ -755,10 +807,12 @@ def _render_registration_md(reg) -> list[str]:
         return []
     rows: list[tuple[str, str]] = []
     if reg.registrar:
-        if reg.registrar_url:
+        registrar_url = _safe_link(reg.registrar_url)  # http(s) only, as in HTML
+        if registrar_url:
             # "]" would end the link text early.
             name = _md_text(reg.registrar).replace("]", "\\]")
-            rows.append(("Registrar", f"[{name}]({reg.registrar_url})"))
+            # Angle-bracketed and escaped: a ")" in the URL ended the link early.
+            rows.append(("Registrar", f"[{name}]({_md_destination(registrar_url)})"))
         else:
             rows.append(("Registrar", _md_text(reg.registrar)))
     if reg.created is not None:
@@ -863,11 +917,12 @@ def render_summary(report: Report, log_path: str | None = None) -> str:
     lines.append("")
     reg_line = _registration_summary_line(report.registration)
     sec_line = _registration_security_line(report.registration)
-    if reg_line:
-        lines.append(reg_line)
-    if sec_line:
-        lines.append(sec_line)
+    # One heading for both lines: it used to come with the first only, so a
+    # domain whose RDAP gave locks but no registrar or expiry printed a bare
+    # "Security:" line that read as the site's security verdict.
     if reg_line or sec_line:
+        lines.append("Registration")
+        lines.extend(line for line in (reg_line, sec_line) if line)
         lines.append("")
     if report.overall_score is None:
         lines.append("Overall: no graded scanners returned a score.")
@@ -882,9 +937,10 @@ def render_summary(report: Report, log_path: str | None = None) -> str:
         ok_count = sum(1 for r in report.results if r.ok)
         lines.append(f"Scanners: {ok_count} of {len(report.results)} ok.")
     if report.total_elapsed is not None:
-        lines.append(f"Scan completed in {int(round(report.total_elapsed))}s.")
-    lines.append("")
-    lines.append("Per scanner:")
+        lines.append(_elapsed_line(report))
+    if report.results:
+        lines.append("")
+        lines.append("Per scanner:")
     for r in report.results:
         if not r.ok:
             lines.append(f"  - {r.scanner}: ERROR - {r.error}")
@@ -901,18 +957,38 @@ def render_summary(report: Report, log_path: str | None = None) -> str:
         elif r.grade is not None or r.score is not None:
             grade = r.grade or "?"
             score = f" ({r.score}/100)" if r.score is not None else ""
-            lines.append(f"  - {r.scanner}: {grade}{score} - {r.summary}")
+            lines.append(f"  - {r.scanner}: {grade}{score}{_summary_tail(r)}")
         elif r.not_applicable:
-            lines.append(f"  - {r.scanner}: not applicable - {r.summary}")
+            lines.append(f"  - {r.scanner}: not applicable{_summary_tail(r)}")
         else:
-            lines.append(f"  - {r.scanner}: link-out (manual check) - {r.summary}")
+            lines.append(f"  - {r.scanner}: link-out (manual check){_summary_tail(r)}")
 
     if report.recommendations:
         lines.append("")
         lines.append("Top recommendations:")
-        for finding, source in report.recommendations[:5]:
+        for finding, source in report.recommendations[:SUMMARY_RECOMMENDATIONS]:
             lines.append(f"  [{finding.severity}] {finding.title} ({source})")
+        # Say the list is cut, as the result page does: five lines read as
+        # every finding there was.
+        more = len(report.recommendations) - SUMMARY_RECOMMENDATIONS
+        if more > 0:
+            lines.append(f"  + {more} more in the full report")
+    elif any(r.ok for r in report.results):
+        # Only when something ran, as on the page: with every scanner failed
+        # this would read as a clean bill.
+        lines.append("")
+        lines.append("Top recommendations: none, no actionable findings were surfaced.")
     return "\n".join(lines)
+
+
+# How many recommendations the text summary lists before pointing at the rest.
+SUMMARY_RECOMMENDATIONS = 5
+
+
+def _summary_tail(r: ScanResult) -> str:
+    """' - <summary>' for a text-summary line, or nothing when the scanner gave
+    no summary (the default is "", which left a dangling ' - ')."""
+    return f" - {r.summary}" if r.summary else ""
 
 
 def render_markdown(report: Report, log_path: str | None = None) -> str:
@@ -1143,9 +1219,15 @@ h2 {
   th, td { padding-left: 8px; padding-right: 8px; }
   td { overflow-wrap: anywhere; }
 }
+/* At every width, not only below 600px: a long redirect target or an error
+   quoting an API URL has no break points, and at 768px it made the table,
+   and the page, 133px wider than the screen. */
+td:last-child { overflow-wrap: anywhere; }
 .reg-cell {
   border-left: 2px solid var(--border-strong);
   padding: 4px 0 4px 12px;
+  /* The tooltip's containing block (see .reg-info-tip). */
+  position: relative;
 }
 .reg-cell.reg-good { border-left-color: var(--good); }
 .reg-cell.reg-warning { border-left-color: var(--warn); }
@@ -1162,7 +1244,6 @@ h2 {
   margin-bottom: 4px;
 }
 .reg-info {
-  position: relative;
   display: inline-flex;
   align-items: center;
   cursor: default;
@@ -1204,6 +1285,20 @@ h2 {
 }
 .reg-info:hover .reg-info-tip,
 .reg-info:focus-visible .reg-info-tip { display: block; }
+/* Hung off the cell rather than the icon, which sits mid-cell: from there a
+   280px bubble ran up to 85px off a 375px phone. Cells in the right half of
+   a row open leftwards from the cell's right edge; a full-width cell caps
+   the bubble at its own width. */
+@media (min-width: 721px) {
+  .reg-cell:nth-child(4n+3) .reg-info-tip,
+  .reg-cell:nth-child(4n) .reg-info-tip { left: auto; right: 0; }
+}
+@media (min-width: 481px) and (max-width: 720px) {
+  .reg-cell:nth-child(even) .reg-info-tip { left: auto; right: 0; }
+}
+@media (max-width: 480px) {
+  .reg-info-tip { max-width: 100%; }
+}
 .reg-value {
   font-size: 15px;
   font-weight: 500;
@@ -1678,7 +1773,7 @@ def render_html(report: Report, log_path: str | None = None) -> str:
             parts.append("<details>")
             parts.append(
                 f"<summary>{_esc(r.scanner)} <span class='count'>"
-                f"({len(r.findings)} findings)</span></summary>"
+                f"({len(r.findings)} finding{'' if len(r.findings) == 1 else 's'})</span></summary>"
             )
             parts.append("<ul>")
             for f in r.findings:
@@ -1735,8 +1830,12 @@ def _render_scanner_section(r: ScanResult, log_path: str | None = None) -> list[
         header += " - link-out (manual check on external site)"
     lines.append(header)
     lines.append("")
-    if r.link:
-        lines.append(f"- Link: {r.link}")
+    # An autolink, http(s) only as in the HTML report: printed bare, a link
+    # carrying the scanned URL's own path ("*", "](", a backtick) turned into
+    # markup.
+    link = _safe_link(r.link)
+    if link:
+        lines.append(f"- Link: {_md_destination(link)}")
     if r.summary:
         lines.append(f"- Summary: {_md_text(r.summary)}")
     if not r.ok and r.error:

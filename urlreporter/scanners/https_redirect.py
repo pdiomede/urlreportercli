@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from ..transport import fetch_headers
 from ._retry import RetryExhausted, describe_exc, retry_request
 from .base import Finding, ScanResult
 
@@ -40,9 +41,11 @@ class HTTPSRedirectScanner:
         link = plain_url
 
         chain: list[str] = []
+        # Only the redirect chain matters, so no body is read: the final page
+        # could be any size, or never end.
         try:
             resp = await retry_request(
-                lambda: client.get(plain_url, follow_redirects=True, timeout=20.0),
+                lambda: fetch_headers(client, plain_url, timeout=20.0),
                 label=self.name, logger=log,
             )
         except RetryExhausted as e:

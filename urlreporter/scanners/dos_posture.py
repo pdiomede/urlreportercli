@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 import httpx
 
 from ..grading import score_to_letter
+from ..transport import fetch_headers
 from ._retry import RetryExhausted, describe_exc, retry_request
 from .base import Finding, ScanResult
 
@@ -117,9 +118,11 @@ class DoSPostureScanner:
         host = urlparse(url).hostname or ""
         link = url
 
+        # Headers only: this check never looks at the body, and reading it
+        # let the site decide how much memory the scan used.
         try:
             resp = await retry_request(
-                lambda: client.get(url, follow_redirects=True, timeout=20.0),
+                lambda: fetch_headers(client, url, timeout=20.0),
                 label=self.name, logger=log,
             )
         except RetryExhausted as e:
